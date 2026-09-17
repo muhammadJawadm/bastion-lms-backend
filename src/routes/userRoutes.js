@@ -11,6 +11,7 @@ const {
     verifyResetOTP,
     resetPassword,
     addEmployee,
+    getEmployees,
     getUser,
     updateUser,
     changePassword,
@@ -28,6 +29,7 @@ router.post('/reset-password', resetPassword);
 
 // Protected — specific paths before the "/:id" catch-all, or they'd never be reached
 router.get('/profile', verifyToken, getUser);
+router.get('/employees', verifyToken, getEmployees);
 router.post('/employees', verifyToken, addEmployee);
 router.patch('/:id/change-password', verifyToken, changePassword);
 router.get('/:id', verifyToken, getUser);

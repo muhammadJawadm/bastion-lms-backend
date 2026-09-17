@@ -1,15 +1,23 @@
 const mongoose = require('mongoose');
 const User = require('../models/User');
+const Company = require('../models/Company');
 const bcrypt = require('bcryptjs');
 const otpGenerator = require('otp-generator');
 const Otp = require('../models/Otp');
 const sendEmail = require('../utils/sendEmail');
 const jwt = require('../utils/jwt');
+
+// POST /users/register
+// Company admin signup — creates the Company (tenant) and its first
+// client_admin user together, since employees never self-register
+// (see addEmployee) and platform_admin accounts are seeded, not signed up.
+// No token here on purpose — the account is unverified until the OTP is
+// confirmed (see verifyOtp), and only /login ever hands out a token.
 exports.registerUser = async (req, res) => {
     try {
-        let { name, email, password } = req.body;
-        if (!name || !email || !password) {
-            return res.status(400).json({ message: 'Name, email, and password are required' });
+        let { name, email, password, companyName } = req.body;
+        if (!name || !email || !password || !companyName) {
+            return res.status(400).json({ message: 'Name, email, password, and companyName are required' });
         }
         email = email.trim().toLowerCase();
         // Convert email to lowercase
@@ -17,10 +25,19 @@ exports.registerUser = async (req, res) => {
         if (existingUser) {
             return res.status(400).json({ message: 'User already exists' });
         }
-        const hashedPassword = await bcrypt.hash(password, 10);
-        const user = await User.create({ name, email, password: hashedPassword });
 
-        const otp = otpGenerator.generate(6, { digits: true, upperCase: false, lowerCase: false, specialChars: false });
+        const company = await Company.create({ name: companyName });
+
+        const hashedPassword = await bcrypt.hash(password, 10);
+        const user = await User.create({
+            name,
+            email,
+            password: hashedPassword,
+            role: 'client_admin',
+            companyId: company._id,
+        });
+
+        const otp = otpGenerator.generate(6, { digits: true, upperCaseAlphabets: false, lowerCaseAlphabets: false, specialChars: false });
 
         const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // OTP expires in 10 minutes
 
@@ -32,19 +49,23 @@ exports.registerUser = async (req, res) => {
 
         await otpEntry.save();
 
-        await sendEmail(email, otp);
-
-        const token = jwt.generateToken(user._id, user.role);
+        // Email delivery isn't configured in every environment — don't let a failed
+        // send take down account creation itself.
+        try {
+            await sendEmail(email, otp);
+        } catch (emailError) {
+            console.error('OTP email failed to send:', emailError.message);
+        }
 
         res.status(201).json({
             success: true,
-            message: "User registered successfully",
-            token,
+            message: "User registered successfully. Please verify the OTP sent to your email before logging in.",
             data: {
                 _id: user._id,
                 name: user.name,
                 email: user.email,
-                role: user.role
+                role: user.role,
+                companyId: company._id,
             }
         });
     }
@@ -103,76 +124,128 @@ exports.addEmployee = async (req, res) => {
     }
 };
 
-exports.verifyOtp = async (req, res) => {
-   const { email, otp } = req.body;
-   if (!email || !otp) {
-       return res.status(400).json({ message: 'Email and OTP are required' });
-   }
-   const user = await User.findOne({ email });
-    if (!user) {
-        return res.status(400).json({ message: 'User does not exist' });
-    }
+// GET /users/employees?companyId=&search=&department=&role=&isActive=
+// The Employees list page — company-scoped, defaults to role: employee
+// (pass role=client_admin to see admins instead, or omit companyId's role
+// filter entirely by passing role=all).
+exports.getEmployees = async (req, res) => {
+    try {
+        const { companyId, search, department, role, isActive } = req.query;
 
-    const otpEntry = await Otp.findOne({ userId: user._id });
-    if (!otpEntry) {
-        return res.status(400).json({ message: 'OTP not found' });
-    }
-
-    if(otpEntry.expiresAt < new Date()|| otpEntry.otp !== otp) {
-        return res.status(400).json({ message: 'Invalid OTP' });
-    }
-    user.is_verified = true;
-    await user.save();
-
-    await Otp.deleteOne({ userId: user._id });
-
-    res.status(200).json({
-        success: true,
-        message: "OTP verified successfully",
-        data: {
-            _id: user._id,
-            name: user.name,
-            email: user.email,
-            role: user.role
+        if (!companyId) {
+            return res.status(400).json({ message: 'Company ID is required' });
         }
-    });
+
+        const filter = { companyId };
+
+        if (!role || role === 'employee') {
+            filter.role = 'employee';
+        } else if (role !== 'all') {
+            filter.role = role;
+        }
+        if (department) filter.department = department;
+        if (isActive !== undefined) filter.isActive = isActive === 'true';
+        if (search) {
+            filter.$or = [
+                { name: { $regex: search, $options: 'i' } },
+                { email: { $regex: search, $options: 'i' } },
+                { jobTitle: { $regex: search, $options: 'i' } },
+            ];
+        }
+
+        const employees = await User.find(filter).select('-password').sort({ createdAt: -1 });
+        res.status(200).json({ success: true, data: employees });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: 'Server error' });
+    }
+};
+
+// Account-verification OTP — must succeed before /login will issue a token.
+exports.verifyOtp = async (req, res) => {
+    try {
+        const { email, otp } = req.body;
+        if (!email || !otp) {
+            return res.status(400).json({ message: 'Email and OTP are required' });
+        }
+        const user = await User.findOne({ email: email.trim().toLowerCase() });
+        if (!user) {
+            return res.status(400).json({ message: 'User does not exist' });
+        }
+
+        const otpEntry = await Otp.findOne({ userId: user._id });
+        if (!otpEntry) {
+            return res.status(400).json({ message: 'OTP not found' });
+        }
+
+        if (otpEntry.expiresAt < new Date() || otpEntry.otp !== otp) {
+            return res.status(400).json({ message: 'Invalid OTP' });
+        }
+        user.is_verified = true;
+        await user.save();
+
+        await Otp.deleteOne({ userId: user._id });
+
+        res.status(200).json({
+            success: true,
+            message: "OTP verified successfully. You can now log in.",
+            data: {
+                _id: user._id,
+                name: user.name,
+                email: user.email,
+                role: user.role
+            }
+        });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: 'Server error' });
+    }
 };
 
 exports.resendOtp = async (req, res) => {
-    const { email } = req.body;
-    if (!email) {
-        return res.status(400).json({ message: 'Email is required' });
+    try {
+        let { email } = req.body;
+        if (!email) {
+            return res.status(400).json({ message: 'Email is required' });
+        }
+        email = email.trim().toLowerCase();
+
+        const user = await User.findOne({ email });
+        if (!user) {
+            return res.status(400).json({ message: 'User does not exist' });
+        }
+
+        if (user.is_verified) {
+            return res.status(400).json({ message: 'User is already verified' });
+        }
+        await Otp.deleteMany({ userId: user._id });
+
+        const otp = otpGenerator.generate(6, { digits: true, upperCase: false, lowerCase: false, specialChars: false });
+
+        const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // OTP expires in 10 minutes
+
+        const otpEntry = new Otp({
+            userId: user._id,
+            otp: otp,
+            expiresAt: expiresAt
+        });
+
+        await otpEntry.save();
+
+        try {
+            await sendEmail(email, otp);
+        } catch (emailError) {
+            console.error('OTP email failed to send:', emailError.message);
+        }
+
+        res.status(200).json({
+            success: true,
+            message: "OTP resent successfully"
+        });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: 'Server error' });
     }
-    email = email.trim().toLowerCase();
-
-    const user = await User.findOne({ email });
-    if (!user) {
-        return res.status(400).json({ message: 'User does not exist' });
-    }
-    
-    if(user.is_verified) {
-        return res.status(400).json({ message: 'User is already verified' });
-    }
-    await Otp.deleteMany({ userId: user._id });
-
-    const otp = otpGenerator.generate(6, { digits: true, upperCase: false, lowerCase: false, specialChars: false });
-
-    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // OTP expires in 10 minutes
-
-    const otpEntry = new Otp({
-        userId: user._id,
-        otp: otp,
-        expiresAt: expiresAt
-    });
-
-    await otpEntry.save();
-
-    await sendEmail(email, otp);
-
-    res.status(200).json({
-        success: true,
-        message: "OTP resent successfully"
-    });
 };
 
 exports.forgotPassword = async (req, res) => {
@@ -195,8 +268,12 @@ exports.forgotPassword = async (req, res) => {
         const otpEntry = new Otp({ userId: user._id, otp, expiresAt });
         await otpEntry.save();
 
-        // Send OTP email
-        await sendEmail(email, otp);
+        // Send OTP email — don't fail the request just because delivery isn't configured
+        try {
+            await sendEmail(email, otp);
+        } catch (emailError) {
+            console.error('Reset OTP email failed to send:', emailError.message);
+        }
 
         res.status(200).json({ success: true, message: "OTP sent to your email" });
     } catch (error) {
@@ -226,11 +303,14 @@ exports.verifyResetOTP = async (req, res) => {
             return res.status(400).json({ success: false, message: "Invalid or expired OTP" });
         }
 
-        // OTP is valid - don't delete, keep it for password reset
+        // OTP is valid — mark it verified and keep it (not delete) so resetPassword
+        // can confirm this step actually happened, without re-accepting the raw OTP.
+        otpEntry.verified = true;
+        await otpEntry.save();
+
         res.status(200).json({
             success: true,
             message: "OTP verified successfully. You can now reset your password.",
-            resetToken: user._id
         });
     } catch (error) {
         console.error(error);
@@ -265,6 +345,12 @@ exports.resetPassword = async (req, res) => {
             return res.status(400).json({ success: false, message: "OTP expired. Please request a new one." });
         }
 
+        // Must have actually completed verify-reset-otp — otherwise anyone who
+        // knows the email could reset the password without ever knowing the OTP.
+        if (!otpEntry.verified) {
+            return res.status(400).json({ success: false, message: "Please verify OTP first before resetting password" });
+        }
+
         // Hash new password
         const hashedPassword = await bcrypt.hash(password, 10);
 
@@ -296,6 +382,10 @@ exports.loginUser = async (req, res) => {
         const isPasswordValid = await bcrypt.compare(password, user.password);
         if (!isPasswordValid) {
             return res.status(400).json({ message: 'Invalid password' });
+        }
+
+        if (!user.is_verified) {
+            return res.status(403).json({ message: 'Please verify your account with the OTP sent to your email before logging in' });
         }
 
         const token = jwt.generateToken(user._id, user.role);
@@ -371,7 +461,11 @@ exports.changePassword = async (req, res) => {
 
 exports.getUser = async (req, res) => {
     try {
-        const id = req.params.id;
+        // params.id for GET /users/:id, falls back to the token's own id for GET /users/profile
+        const id = req.params.id || (req.user && req.user.id);
+        if (!id) {
+            return res.status(400).json({ message: 'User ID is required' });
+        }
         const user = await User.findById(id).select('-password'); // Exclude password from the response
         if (!user) {
             return res.status(404).json({ message: 'User not found' });

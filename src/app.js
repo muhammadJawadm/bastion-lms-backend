@@ -8,6 +8,8 @@ const lessonRoutes = require('./routes/lessonRoutes');
 const formRoutes = require('./routes/formRoutes');
 const companyRoutes = require('./routes/companyRoutes');
 const enrollmentRoutes = require('./routes/enrollmentRoutes');
+const adminRoutes = require('./routes/adminRoutes');
+const uploadRoutes = require('./routes/uploadRoutes');
 
 const app = express();
 
@@ -24,6 +26,8 @@ app.use('/api/lessons', lessonRoutes);
 app.use('/api/forms', formRoutes);
 app.use('/api/company', companyRoutes);
 app.use('/api/enrollments', enrollmentRoutes);
+app.use('/api/admin', adminRoutes);
+app.use('/api/uploads', uploadRoutes);
 
 // 404 fallback — anything not matched above
 app.use((req, res) => {

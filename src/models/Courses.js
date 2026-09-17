@@ -45,6 +45,11 @@ const courseSchema = new mongoose.Schema({
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User',
     },
+    sourceLibraryCourseId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Course',
+        default: null,
+    },
     modules: [{
         title: {
             type: String,

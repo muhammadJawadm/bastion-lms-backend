@@ -30,11 +30,9 @@ const userSchema = new mongoose.Schema({
     },
     department:{
         type: String,
-        required: true,
     },
     jobTitle: {
         type: String,
-        required: true,
     },
     isActive: {
         type: Boolean,

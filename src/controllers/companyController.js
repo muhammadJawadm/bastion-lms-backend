@@ -1,5 +1,10 @@
 const mongoose = require("mongoose");
 const Company = require("../models/Company");
+const Course = require("../models/Courses");
+const Form = require("../models/Forms");
+const User = require("../models/User");
+const Enrollment = require("../models/Enrollments");
+const Certificate = require("../models/Certificates");
 
 // GET /company/:companyId
 // Loads Settings — one document backs all three tabs (Profile, Branding, Notifications).
@@ -114,6 +119,64 @@ exports.updateNotificationPreferences = async (req, res) => {
             success: true,
             message: "Notification preferences updated successfully",
             data: company.notificationPreferences,
+        });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Server error" });
+    }
+};
+
+// GET /company/:companyId/dashboard
+// Company admin dashboard — every count tile in one call.
+exports.getDashboardStats = async (req, res) => {
+    const { companyId } = req.params;
+
+    try {
+        const [
+            totalCourses,
+            draftCourses,
+            publishedCourses,
+            totalForms,
+            draftForms,
+            publishedForms,
+            totalEmployees,
+            totalEnrollments,
+            assignedEnrollments,
+            inProgressEnrollments,
+            completedEnrollments,
+            overdueEnrollments,
+            totalCertificates,
+        ] = await Promise.all([
+            Course.countDocuments({ companyId }),
+            Course.countDocuments({ companyId, status: "draft" }),
+            Course.countDocuments({ companyId, status: "published" }),
+            Form.countDocuments({ companyId }),
+            Form.countDocuments({ companyId, status: "draft" }),
+            Form.countDocuments({ companyId, status: "published" }),
+            User.countDocuments({ companyId, role: "employee" }),
+            Enrollment.countDocuments({ companyId }),
+            Enrollment.countDocuments({ companyId, status: "assigned" }),
+            Enrollment.countDocuments({ companyId, status: "in_progress" }),
+            Enrollment.countDocuments({ companyId, status: "completed" }),
+            Enrollment.countDocuments({ companyId, status: "overdue" }),
+            Certificate.countDocuments({ companyId }),
+        ]);
+
+        res.status(200).json({
+            success: true,
+            data: {
+                courses: { total: totalCourses, draft: draftCourses, published: publishedCourses },
+                forms: { total: totalForms, draft: draftForms, published: publishedForms },
+                employees: { total: totalEmployees },
+                enrollments: {
+                    total: totalEnrollments,
+                    assigned: assignedEnrollments,
+                    inProgress: inProgressEnrollments,
+                    completed: completedEnrollments,
+                    overdue: overdueEnrollments,
+                },
+                certificates: { total: totalCertificates },
+            },
         });
     } catch (error) {
         console.error(error);

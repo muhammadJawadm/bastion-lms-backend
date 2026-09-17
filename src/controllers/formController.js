@@ -1,5 +1,6 @@
 const mongoose = require("mongoose");
 const Form = require("../models/Forms");
+const FormResponse = require("../models/FormResponses");
 
 // POST /forms
 // Step 1 — the "title + description" screen. Creates the form and
@@ -26,6 +27,47 @@ exports.createForm = async (req, res) => {
             message: "Form created successfully",
             data: newForm,
         });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Server error" });
+    }
+};
+
+// GET /forms?companyId=&search=&status=
+// The Forms list page — company-scoped.
+exports.getForms = async (req, res) => {
+    try {
+        const { companyId, search, status } = req.query;
+
+        if (!companyId) {
+            return res.status(400).json({ message: "Company ID is required" });
+        }
+
+        const filter = { companyId };
+        if (status) filter.status = status;
+        if (search) filter.title = { $regex: search, $options: "i" };
+
+        const forms = await Form.find(filter).sort({ updatedAt: -1 });
+        res.status(200).json({ success: true, data: forms });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Server error" });
+    }
+};
+
+// GET /forms/:formId
+// Loads the whole form — pages/items/fields/columns together — for the
+// form builder to reopen, matching how it's edited client-side as one document.
+exports.getFormById = async (req, res) => {
+    const { formId } = req.params;
+
+    try {
+        const form = await Form.findById(formId);
+        if (!form) {
+            return res.status(404).json({ message: "Form not found" });
+        }
+
+        res.status(200).json({ success: true, data: form });
     } catch (error) {
         console.error(error);
         res.status(500).json({ message: "Server error" });
@@ -480,6 +522,103 @@ exports.deleteColumn = async (req, res) => {
         await form.save();
 
         res.status(200).json({ success: true, message: "Column deleted successfully" });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Server error" });
+    }
+};
+
+// POST /forms/:formId/responses
+// Employee submits a filled-out form. Checks every required section field
+// was answered, and flags any answer that matches its field's flagValues.
+exports.submitFormResponse = async (req, res) => {
+    const { formId } = req.params;
+    const { companyId, submittedBy, answers, tableRows } = req.body;
+
+    try {
+        const form = await Form.findById(formId).lean();
+        if (!form) {
+            return res.status(404).json({ message: "Form not found" });
+        }
+
+        // collect every section field's required/flagValues, keyed by its _id
+        const fieldMeta = {};
+        (form.pages || []).forEach((page) => {
+            (page.items || []).forEach((item) => {
+                if (item.kind === "section") {
+                    (item.fields || []).forEach((field) => {
+                        fieldMeta[String(field._id)] = {
+                            required: field.required,
+                            flagValues: field.flagValues || [],
+                        };
+                    });
+                }
+            });
+        });
+
+        const answeredFieldIds = new Set((answers || []).map((a) => String(a.fieldId)));
+        const missingRequired = Object.keys(fieldMeta).filter(
+            (fieldId) => fieldMeta[fieldId].required && !answeredFieldIds.has(fieldId)
+        );
+        if (missingRequired.length) {
+            return res.status(400).json({
+                message: "Missing required fields",
+                missingFieldIds: missingRequired,
+            });
+        }
+
+        const flaggedAnswers = (answers || []).map((a) => {
+            const meta = fieldMeta[String(a.fieldId)];
+            const flagValues = meta ? meta.flagValues : [];
+            const flagged = flagValues.length > 0 && flagValues.includes(String(a.value));
+            return { fieldId: a.fieldId, value: a.value, flagged };
+        });
+
+        const response = new FormResponse({
+            formId,
+            companyId,
+            submittedBy,
+            answers: flaggedAnswers,
+            tableRows: tableRows || [],
+        });
+        await response.save();
+
+        res.status(201).json({
+            success: true,
+            message: "Form submitted successfully",
+            data: response,
+        });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Server error" });
+    }
+};
+
+// GET /forms/:formId/responses
+// Admin review list — every submission for this form, newest first.
+exports.getFormResponses = async (req, res) => {
+    const { formId } = req.params;
+
+    try {
+        const responses = await FormResponse.find({ formId }).sort({ submittedAt: -1 });
+        res.status(200).json({ success: true, data: responses });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Server error" });
+    }
+};
+
+// GET /forms/:formId/responses/:responseId
+// One full submission — e.g. to render a review screen or a PDF.
+exports.getFormResponseById = async (req, res) => {
+    const { responseId } = req.params;
+
+    try {
+        const response = await FormResponse.findById(responseId);
+        if (!response) {
+            return res.status(404).json({ message: "Response not found" });
+        }
+        res.status(200).json({ success: true, data: response });
     } catch (error) {
         console.error(error);
         res.status(500).json({ message: "Server error" });

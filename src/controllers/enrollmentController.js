@@ -32,6 +32,23 @@ exports.createEnrollment = async (req, res) => {
     }
 };
 
+// GET /enrollments/:id
+// One assignment's detail — e.g. the mobile app's "My Training" detail screen.
+exports.getEnrollmentById = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const enrollment = await Enrollment.findById(id);
+        if (!enrollment) {
+            return res.status(404).json({ message: "Enrollment not found" });
+        }
+
+        res.status(200).json({ success: true, data: enrollment });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Server error" });
+    }
+};
+
 // PATCH /enrollments/:id
 // Employee completing lessons updates progress here; hitting 100% auto-completes it.
 // An admin can also use this to change status directly (e.g. "waived").

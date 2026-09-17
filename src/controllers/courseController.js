@@ -1,5 +1,6 @@
 const mongoose = require("mongoose");
 const Course = require("../models/Courses");
+const Lesson = require("../models/Lesson");
 
 
 exports.createCourse = async (req, res) => {
@@ -61,4 +62,163 @@ exports.createCourseSetting  = async (req, res) => {
         res.status(500).json({ message: "Server error" });
     }
 }
+
+// GET /courses?companyId=&search=&status=&category=
+// The Courses list page — company-scoped. (companyId: null library courses
+// are excluded here on purpose — see getCourseLibrary for those.)
+exports.getCourses = async (req, res) => {
+    try {
+        const { companyId, search, status, category } = req.query;
+
+        if (!companyId) {
+            return res.status(400).json({ message: "Company ID is required" });
+        }
+
+        const filter = { companyId };
+        if (status) filter.status = status;
+        if (category) filter.category = category;
+        if (search) filter.title = { $regex: search, $options: "i" };
+
+        const courses = await Course.find(filter).sort({ updatedAt: -1 });
+        res.status(200).json({ success: true, data: courses });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Server error" });
+    }
+};
+
+// GET /courses/:courseId
+// Mobile "course detail" screen — the course plus every lesson and every
+// page (block) inside each lesson, all in one call.
+exports.getCourseDetails = async (req, res) => {
+    try {
+        const { courseId } = req.params;
+
+        const course = await Course.findById(courseId);
+        if (!course) {
+            return res.status(404).json({ message: "Course not found" });
+        }
+
+        const lessons = await Lesson.find({ courseId }).sort({ sortOrder: 1 });
+
+        res.status(200).json({
+            success: true,
+            data: {
+                ...course.toObject(),
+                lessons,
+            },
+        });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Server error" });
+    }
+};
+
+// GET /courses/library?companyId=...
+// The Course Library screen — every companyId:null course, flagged with
+// "added" so the frontend can show ADDED vs ADD TO COMPANY per card.
+exports.getCourseLibrary = async (req, res) => {
+    try {
+        const { companyId } = req.query;
+
+        const libraryCourses = await Course.find({ companyId: null }).lean();
+
+        let addedSourceIds = [];
+        if (companyId) {
+            const myCopies = await Course.find({
+                companyId,
+                sourceLibraryCourseId: { $ne: null },
+            }).select('sourceLibraryCourseId').lean();
+            addedSourceIds = myCopies.map((c) => String(c.sourceLibraryCourseId));
+        }
+
+        const data = libraryCourses.map((course) => ({
+            ...course,
+            added: addedSourceIds.includes(String(course._id)),
+        }));
+
+        res.status(200).json({ success: true, data });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Server error" });
+    }
+};
+
+// POST /courses/library/:id/add-to-company
+// "ADD TO COMPANY" — deep-copies the library course (and its lessons/pages)
+// into the requesting company as a brand-new, independently editable course.
+exports.addToCompany = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { companyId, createdBy } = req.body;
+
+        if (!companyId) {
+            return res.status(400).json({ message: "Company ID is required" });
+        }
+
+        const libraryCourse = await Course.findOne({ _id: id, companyId: null }).lean();
+        if (!libraryCourse) {
+            return res.status(404).json({ message: "Library course not found" });
+        }
+
+        const existing = await Course.findOne({ companyId, sourceLibraryCourseId: libraryCourse._id });
+        if (existing) {
+            return res.status(400).json({
+                message: "This course has already been added to your company",
+                data: existing,
+            });
+        }
+
+        const newCourse = new Course({
+            title: libraryCourse.title,
+            description: libraryCourse.description,
+            category: libraryCourse.category,
+            durationMinutes: libraryCourse.durationMinutes,
+            certificateTitle: libraryCourse.certificateTitle,
+            coverImageUrl: libraryCourse.coverImageUrl,
+            passScore: libraryCourse.passScore,
+            issuesCertificate: libraryCourse.issuesCertificate,
+            modules: (libraryCourse.modules || []).map((m) => ({
+                title: m.title,
+                description: m.description,
+                sortOrder: m.sortOrder,
+            })),
+            companyId,
+            createdBy,
+            status: "draft",
+            sourceLibraryCourseId: libraryCourse._id,
+        });
+        await newCourse.save();
+
+        const libraryLessons = await Lesson.find({ courseId: libraryCourse._id }).lean();
+        if (libraryLessons.length) {
+            const copiedLessons = libraryLessons.map((lesson) => ({
+                courseId: newCourse._id,
+                moduleId: null, // old module ids no longer apply — modules were just regenerated above
+                title: lesson.title,
+                isRequired: lesson.isRequired,
+                sortOrder: lesson.sortOrder,
+                blocks: (lesson.blocks || []).map((b) => ({
+                    type: b.type,
+                    data: b.data,
+                    sortOrder: b.sortOrder,
+                })),
+                chapters: (lesson.chapters || []).map((c) => ({
+                    title: c.title,
+                    sortOrder: c.sortOrder,
+                })),
+            }));
+            await Lesson.insertMany(copiedLessons);
+        }
+
+        res.status(201).json({
+            success: true,
+            message: "Course added to your company successfully",
+            data: newCourse,
+        });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Server error" });
+    }
+};
 

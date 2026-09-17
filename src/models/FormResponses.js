@@ -5,7 +5,11 @@ const formResponseSchema = new mongoose.Schema({
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Form',
     },
-    respondentId: {
+    companyId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Company',
+    },
+    submittedBy: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User',
     },
@@ -13,32 +17,42 @@ const formResponseSchema = new mongoose.Schema({
         type: Date,
         default: Date.now,
     },
+    // one entry per section field — value shape depends on the field's type
+    // (String for text/dropdown/yes_no, [String] for checkbox, Number for rating, etc.)
     answers: [{
         fieldId: {
             type: mongoose.Schema.Types.ObjectId,
-            ref: 'FormField',
         },
         value: {
-            type: String,
+            type: mongoose.Schema.Types.Mixed,
         },
+        // true when this answer matches one of the field's flagValues (a safety concern)
         flagged: {
             type: Boolean,
             default: false,
         },
     }],
+    // one entry per row of a table item — a table can have many rows
+    // (e.g. one row per crew member signing in)
     tableRows: [{
         pageItemId: {
             type: mongoose.Schema.Types.ObjectId,
-            ref: 'FormField',
         },
-        rows: {
-            type: String,
+        sortOrder: {
+            type: Number,
+            default: 0,
         },
+        cells: [{
+            columnId: {
+                type: mongoose.Schema.Types.ObjectId,
+            },
+            value: {
+                type: mongoose.Schema.Types.Mixed,
+            },
+        }],
     }],
-
 },
-    {
-        timestamps: true,
-    });
+    { timestamps: true }
+);
 
 module.exports = mongoose.model('FormResponse', formResponseSchema);
