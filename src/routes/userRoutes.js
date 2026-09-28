@@ -11,6 +11,7 @@ const {
     verifyResetOTP,
     resetPassword,
     addEmployee,
+    addUser,
     getEmployees,
     getUser,
     updateUser,
@@ -31,6 +32,7 @@ router.post('/reset-password', resetPassword);
 router.get('/profile', verifyToken, getUser);
 router.get('/employees', verifyToken, getEmployees);
 router.post('/employees', verifyToken, addEmployee);
+router.post('/', verifyToken, addUser);
 router.patch('/:id/change-password', verifyToken, changePassword);
 router.get('/:id', verifyToken, getUser);
 router.patch('/:id', verifyToken, updateUser);

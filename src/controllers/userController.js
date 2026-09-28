@@ -124,6 +124,56 @@ exports.addEmployee = async (req, res) => {
     }
 };
 
+// POST /users  (admin-side "Add User" — no restriction yet on which role can call this)
+// Same shape as addEmployee, but always creates a plain "user" account.
+exports.addUser = async (req, res) => {
+    try {
+        const { name, email, password, companyId, department, jobTitle, invitedBy } = req.body;
+
+        if (!name || !email || !password) {
+            return res.status(400).json({ message: 'Name, email and password are required' });
+        }
+
+        const normalizedEmail = email.trim().toLowerCase();
+        const existingUser = await User.findOne({ email: normalizedEmail });
+        if (existingUser) {
+            return res.status(400).json({ message: 'A user with this email already exists' });
+        }
+
+        const hashedPassword = await bcrypt.hash(password, 10);
+
+        const newUser = await User.create({
+            name,
+            email: normalizedEmail,
+            password: hashedPassword,
+            role: 'user',
+            companyId,
+            department,
+            jobTitle,
+            invitedBy,
+            mustChangePassword: true,
+            is_verified: true,
+        });
+
+        res.status(201).json({
+            success: true,
+            message: 'User created successfully',
+            data: {
+                _id: newUser._id,
+                name: newUser.name,
+                email: newUser.email,
+                role: newUser.role,
+                companyId: newUser.companyId,
+                department: newUser.department,
+                jobTitle: newUser.jobTitle,
+            },
+        });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: 'Server error' });
+    }
+};
+
 // GET /users/employees?companyId=&search=&department=&role=&isActive=
 // The Employees list page — company-scoped, defaults to role: employee
 // (pass role=client_admin to see admins instead, or omit companyId's role
