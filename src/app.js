@@ -20,14 +20,14 @@ app.get('/', (req, res) => {
     res.send('Bastion LMS Backend API is running...');
 });
 
-app.use('/api/users', userRoutes);
-app.use('/api/courses', courseRoutes);
-app.use('/api/lessons', lessonRoutes);
-app.use('/api/forms', formRoutes);
-app.use('/api/company', companyRoutes);
-app.use('/api/enrollments', enrollmentRoutes);
-app.use('/api/admin', adminRoutes);
-app.use('/api/uploads', uploadRoutes);
+app.use('/users', userRoutes);
+app.use('/courses', courseRoutes);
+app.use('/lessons', lessonRoutes);
+app.use('/forms', formRoutes);
+app.use('/company', companyRoutes);
+app.use('/enrollments', enrollmentRoutes);
+app.use('/admin', adminRoutes);
+app.use('/uploads', uploadRoutes);
 
 // 404 fallback — anything not matched above
 app.use((req, res) => {
