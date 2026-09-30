@@ -4,7 +4,7 @@ const Company = require('../models/Company');
 const bcrypt = require('bcryptjs');
 const otpGenerator = require('otp-generator');
 const Otp = require('../models/Otp');
-const sendEmail = require('../utils/sendEmail');
+const { sendEmail, sendCredentialsEmail } = require('../utils/sendEmail');
 const jwt = require('../utils/jwt');
 
 // POST /users/register
@@ -154,6 +154,14 @@ exports.addUser = async (req, res) => {
             mustChangePassword: true,
             is_verified: true,
         });
+
+        // Mobile user's only way to learn their password — don't let a failed
+        // send take down account creation itself.
+        try {
+            await sendCredentialsEmail(normalizedEmail, password, name);
+        } catch (emailError) {
+            console.error('Credentials email failed to send:', emailError.message);
+        }
 
         res.status(201).json({
             success: true,
@@ -452,6 +460,7 @@ exports.loginUser = async (req, res) => {
                 email: user.email,
                 role: user.role,
                 companyId: user.companyId,
+                mustChangePassword: user.mustChangePassword,
             }
         });
     }
@@ -497,6 +506,7 @@ exports.changePassword = async (req, res) => {
         }
         const hashedPassword = await bcrypt.hash(newPassword, 10);
         user.password = hashedPassword;
+        user.mustChangePassword = false;
         user.updatedAt = new Date();
         await user.save();
         res.status(200).json({
@@ -516,15 +526,25 @@ exports.getUser = async (req, res) => {
         if (!id) {
             return res.status(400).json({ message: 'User ID is required' });
         }
+        // Own profile if there's no :id param at all (GET /profile), or the :id
+        // requested is the same account the token belongs to.
+        const isOwnProfile = !req.params.id || (req.user && String(req.user.id) === String(id));
         const user = await User.findById(id).select('-password'); // Exclude password from the response
         if (!user) {
             return res.status(404).json({ message: 'User not found' });
         }
-        res.status(200).json({
+        const response = {
             success: true,
             message: 'User retrieved successfully',
             data: user
-        });
+        };
+        // Only re-issue a token for the caller's own profile — handing back a
+        // token for someone else's account (GET /users/:id) would let an admin
+        // impersonate whichever user they look up.
+        if (isOwnProfile) {
+            response.token = jwt.generateToken(user._id, user.role);
+        }
+        res.status(200).json(response);
     } catch (error) {
         res.status(500).json({ message: error.message });
     }

@@ -24,4 +24,22 @@ const sendEmail = async (email , otp) => {
     console.log(`Email sent to ${email} with OTP: ${otp}`);
 };
 
-module.exports = sendEmail;
+// Sent when an admin creates a mobile-side account (see addUser) — hands the
+// user their login email/password so they can sign in and set their own
+// password on first login.
+const sendCredentialsEmail = async (email, password, name) => {
+    await transporter.sendMail({
+        from: process.env.EMAIL,
+        to: email,
+        subject: 'Your account has been created',
+        html: `
+            <h2>Welcome${name ? `, ${name}` : ''}!</h2>
+            <p>An account has been created for you. Use these credentials to log in:</p>
+            <p><b>Email:</b> ${email}<br/><b>Password:</b> ${password}</p>
+            <p>You'll be asked to set your own password the first time you log in.</p>
+        `,
+    });
+    console.log(`Credentials email sent to ${email}`);
+};
+
+module.exports = { sendEmail, sendCredentialsEmail };
