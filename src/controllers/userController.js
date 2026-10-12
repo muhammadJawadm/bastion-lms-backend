@@ -9,8 +9,8 @@ const jwt = require('../utils/jwt');
 
 // POST /users/register
 // Company admin signup — creates the Company (tenant) and its first
-// client_admin user together, since employees never self-register
-// (see addEmployee) and platform_admin accounts are seeded, not signed up.
+// client_admin user together, since mobile users never self-register
+// (see addUser) and platform_admin accounts are seeded, not signed up.
 // No token here on purpose — the account is unverified until the OTP is
 // confirmed (see verifyOtp), and only /login ever hands out a token.
 exports.registerUser = async (req, res) => {
@@ -74,14 +74,30 @@ exports.registerUser = async (req, res) => {
     }
 };
 
-// POST /users  (company admin only, once you wire auth — see note below)
-// Admin-side "Add Employee" — no OTP, the admin is vetting the account directly.
-exports.addEmployee = async (req, res) => {
+// POST /users  (client_admin or platform_admin — route-gated)
+// A Company Admin adding a teammate: another Company Admin or a plain mobile
+// User, always within their own company. A Super Admin can do the same for
+// any company (they pass companyId explicitly). No OTP — the caller already
+// vetted the account directly, so it's active immediately.
+const CREATABLE_ROLES = ['user', 'client_admin'];
+exports.addUser = async (req, res) => {
     try {
-        const { name, email, password, role, companyId, department, jobTitle, invitedBy } = req.body;
+        const { name, email, password, department, jobTitle, invitedBy } = req.body;
+        let { role, companyId } = req.body;
+        role = role || 'user';
 
-        if (!name || !email || !password || !role || !companyId) {
-            return res.status(400).json({ message: 'Name, email, password, role and companyId are required' });
+        if (!CREATABLE_ROLES.includes(role)) {
+            return res.status(400).json({ message: `role must be one of: ${CREATABLE_ROLES.join(', ')}` });
+        }
+
+        // A Company Admin can only ever add people to their own company —
+        // whatever companyId they send is ignored in favor of their own.
+        if (req.user.role === 'client_admin') {
+            companyId = req.user.companyId;
+        }
+
+        if (!name || !email || !password || !companyId) {
+            return res.status(400).json({ message: 'Name, email, password and companyId are required' });
         }
 
         const normalizedEmail = email.trim().toLowerCase();
@@ -101,62 +117,12 @@ exports.addEmployee = async (req, res) => {
             department,
             jobTitle,
             invitedBy,
-            mustChangePassword: true, // employee must set their own password on first login
-            is_verified: true,        // admin already vetted this account, skip OTP
-        });
-
-        res.status(201).json({
-            success: true,
-            message: 'User created successfully',
-            data: {
-                _id: newUser._id,
-                name: newUser.name,
-                email: newUser.email,
-                role: newUser.role,
-                companyId: newUser.companyId,
-                department: newUser.department,
-                jobTitle: newUser.jobTitle,
-            },
-        });
-    } catch (error) {
-        console.error(error);
-        res.status(500).json({ message: 'Server error' });
-    }
-};
-
-// POST /users  (admin-side "Add User" — no restriction yet on which role can call this)
-// Same shape as addEmployee, but always creates a plain "user" account.
-exports.addUser = async (req, res) => {
-    try {
-        const { name, email, password, companyId, department, jobTitle, invitedBy } = req.body;
-
-        if (!name || !email || !password) {
-            return res.status(400).json({ message: 'Name, email and password are required' });
-        }
-
-        const normalizedEmail = email.trim().toLowerCase();
-        const existingUser = await User.findOne({ email: normalizedEmail });
-        if (existingUser) {
-            return res.status(400).json({ message: 'A user with this email already exists' });
-        }
-
-        const hashedPassword = await bcrypt.hash(password, 10);
-
-        const newUser = await User.create({
-            name,
-            email: normalizedEmail,
-            password: hashedPassword,
-            role: 'user',
-            companyId,
-            department,
-            jobTitle,
-            invitedBy,
             mustChangePassword: true,
             is_verified: true,
         });
 
-        // Mobile user's only way to learn their password — don't let a failed
-        // send take down account creation itself.
+        // The new account's only way to learn its password — don't let a
+        // failed send take down account creation itself.
         try {
             await sendCredentialsEmail(normalizedEmail, password, name);
         } catch (emailError) {
@@ -182,22 +148,79 @@ exports.addUser = async (req, res) => {
     }
 };
 
-// GET /users/employees?companyId=&search=&department=&role=&isActive=
-// The Employees list page — company-scoped, defaults to role: employee
-// (pass role=client_admin to see admins instead, or omit companyId's role
-// filter entirely by passing role=all).
-exports.getEmployees = async (req, res) => {
+// POST /users/company-admins  (platform_admin only — route-gated)
+// Super Admin onboards a brand-new company and its first Company Admin in
+// one step — same shape as registerUser's self-service signup, but admin-
+// vetted so there's no OTP gate.
+exports.createCompanyAdmin = async (req, res) => {
     try {
-        const { companyId, search, department, role, isActive } = req.query;
+        const { name, email, password, companyName } = req.body;
+        if (!name || !email || !password || !companyName) {
+            return res.status(400).json({ message: 'Name, email, password, and companyName are required' });
+        }
 
+        const normalizedEmail = email.trim().toLowerCase();
+        const existingUser = await User.findOne({ email: normalizedEmail });
+        if (existingUser) {
+            return res.status(400).json({ message: 'A user with this email already exists' });
+        }
+
+        const company = await Company.create({ name: companyName });
+
+        const hashedPassword = await bcrypt.hash(password, 10);
+        const newUser = await User.create({
+            name,
+            email: normalizedEmail,
+            password: hashedPassword,
+            role: 'client_admin',
+            companyId: company._id,
+            mustChangePassword: true,
+            is_verified: true,
+        });
+
+        try {
+            await sendCredentialsEmail(normalizedEmail, password, name);
+        } catch (emailError) {
+            console.error('Credentials email failed to send:', emailError.message);
+        }
+
+        res.status(201).json({
+            success: true,
+            message: 'Company and admin created successfully',
+            data: {
+                _id: newUser._id,
+                name: newUser.name,
+                email: newUser.email,
+                role: newUser.role,
+                companyId: company._id,
+            },
+        });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: 'Server error' });
+    }
+};
+
+// GET /users?companyId=&search=&department=&role=&isActive=  (client_admin or platform_admin — route-gated)
+// The company's people list — defaults to role: user (pass role=client_admin
+// to see co-admins instead, or role=all for both). A Company Admin is always
+// scoped to their own company, regardless of what companyId they pass.
+exports.getUsers = async (req, res) => {
+    try {
+        const { search, department, role, isActive } = req.query;
+        let companyId = req.query.companyId;
+
+        if (req.user.role === 'client_admin') {
+            companyId = req.user.companyId;
+        }
         if (!companyId) {
             return res.status(400).json({ message: 'Company ID is required' });
         }
 
         const filter = { companyId };
 
-        if (!role || role === 'employee') {
-            filter.role = 'employee';
+        if (!role || role === 'user') {
+            filter.role = 'user';
         } else if (role !== 'all') {
             filter.role = role;
         }
@@ -211,8 +234,8 @@ exports.getEmployees = async (req, res) => {
             ];
         }
 
-        const employees = await User.find(filter).select('-password').sort({ createdAt: -1 });
-        res.status(200).json({ success: true, data: employees });
+        const users = await User.find(filter).select('-password').sort({ createdAt: -1 });
+        res.status(200).json({ success: true, data: users });
     } catch (error) {
         console.error(error);
         res.status(500).json({ message: 'Server error' });
@@ -446,7 +469,7 @@ exports.loginUser = async (req, res) => {
             return res.status(403).json({ message: 'Please verify your account with the OTP sent to your email before logging in' });
         }
 
-        const token = jwt.generateToken(user._id, user.role);
+        const token = jwt.generateToken(user._id, user.role, user.companyId);
         user.lastLoginAt = new Date();
         await user.save();
 
@@ -469,13 +492,50 @@ exports.loginUser = async (req, res) => {
     }
 };
 
+// PATCH /users/:id
+// Only a safe, fixed set of fields is ever writable here — never role,
+// companyId or password (password has its own endpoint) — so this can't be
+// used to self-promote or jump companies.
+const SELF_EDITABLE_FIELDS = ['name', 'department', 'jobTitle', 'avatarUrl'];
 exports.updateUser = async (req, res) => {
     try {
         const id = req.params.id;
-        const user = await User.findByIdAndUpdate(id, req.body, { new: true });
-        if (!user) {
+        const target = await User.findById(id);
+        if (!target) {
             return res.status(404).json({ message: 'User not found' });
         }
+
+        const isOwnProfile = String(req.user.id) === String(id);
+        if (!isOwnProfile) {
+            if (req.user.role === 'user') {
+                return res.status(403).json({ message: 'Forbidden' });
+            }
+            if (req.user.role === 'client_admin' && String(target.companyId) !== String(req.user.companyId)) {
+                return res.status(403).json({ message: 'Forbidden' });
+            }
+            // platform_admin is view-only — it can look at anyone, but not edit them
+            if (req.user.role === 'platform_admin') {
+                return res.status(403).json({ message: 'Forbidden' });
+            }
+        }
+
+        const updates = {};
+        SELF_EDITABLE_FIELDS.forEach((field) => {
+            if (req.body[field] !== undefined) updates[field] = req.body[field];
+        });
+        // A Company Admin editing someone else in their company can also
+        // change role (user <-> client_admin) and active status.
+        if (!isOwnProfile && req.user.role === 'client_admin') {
+            if (req.body.role !== undefined) {
+                if (!CREATABLE_ROLES.includes(req.body.role)) {
+                    return res.status(400).json({ message: `role must be one of: ${CREATABLE_ROLES.join(', ')}` });
+                }
+                updates.role = req.body.role;
+            }
+            if (req.body.isActive !== undefined) updates.isActive = req.body.isActive;
+        }
+
+        const user = await User.findByIdAndUpdate(id, updates, { new: true }).select('-password');
         res.status(200).json({
             success: true,
             message: 'User updated successfully',
@@ -489,6 +549,9 @@ exports.updateUser = async (req, res) => {
 exports.changePassword = async (req, res) => {
     try {
         const id = req.params.id;
+        if (String(req.user.id) !== String(id)) {
+            return res.status(403).json({ message: 'You can only change your own password' });
+        }
         const { currentPassword,newPassword, confirmPassword } = req.body;
         if(!currentPassword || !newPassword || !confirmPassword) {
             return res.status(400).json({ message: 'Current password, new password, and confirm password are required' });
@@ -533,6 +596,17 @@ exports.getUser = async (req, res) => {
         if (!user) {
             return res.status(404).json({ message: 'User not found' });
         }
+
+        if (!isOwnProfile) {
+            if (req.user.role === 'user') {
+                return res.status(403).json({ message: 'Forbidden' });
+            }
+            if (req.user.role === 'client_admin' && String(user.companyId) !== String(req.user.companyId)) {
+                return res.status(403).json({ message: 'Forbidden' });
+            }
+            // platform_admin can view anyone
+        }
+
         const response = {
             success: true,
             message: 'User retrieved successfully',
@@ -542,7 +616,7 @@ exports.getUser = async (req, res) => {
         // token for someone else's account (GET /users/:id) would let an admin
         // impersonate whichever user they look up.
         if (isOwnProfile) {
-            response.token = jwt.generateToken(user._id, user.role);
+            response.token = jwt.generateToken(user._id, user.role, user.companyId);
         }
         res.status(200).json(response);
     } catch (error) {
@@ -560,10 +634,24 @@ exports.deleteUser = async (req, res) => {
         if (!id) {
             return res.status(400).json({ message: 'User ID is required' });
         }
-        const user = await User.findByIdAndDelete(id);
-        if (!user) {
+
+        const target = await User.findById(id);
+        if (!target) {
             return res.status(404).json({ message: 'User not found' });
         }
+
+        const isSelf = String(req.user.id) === String(id);
+        if (!isSelf) {
+            if (req.user.role === 'user') {
+                return res.status(403).json({ message: 'Forbidden' });
+            }
+            if (req.user.role === 'client_admin' && String(target.companyId) !== String(req.user.companyId)) {
+                return res.status(403).json({ message: 'Forbidden' });
+            }
+            // platform_admin can delete anyone
+        }
+
+        const user = await User.findByIdAndDelete(id);
         res.status(200).json({
             success: true,
             message: 'User deleted successfully',

@@ -22,7 +22,9 @@ const toMobileStatus = (status) => {
 // Admin assigns a course to an employee.
 exports.createEnrollment = async (req, res) => {
     try {
-        const { courseId, userId, companyId, dueDate } = req.body;
+        const { courseId, userId, dueDate } = req.body;
+        // route is client_admin-only — always their own company
+        const companyId = req.user.companyId;
 
         if (!courseId || !userId || !companyId) {
             return res.status(400).json({ message: "Course ID, User ID and Company ID are required" });
@@ -58,6 +60,14 @@ exports.getEnrollmentById = async (req, res) => {
         if (!enrollment) {
             return res.status(404).json({ message: "Enrollment not found" });
         }
+
+        if (req.user.role === 'user' && String(enrollment.userId) !== String(req.user.id)) {
+            return res.status(403).json({ message: "Forbidden" });
+        }
+        if (req.user.role === 'client_admin' && String(enrollment.companyId) !== String(req.user.companyId)) {
+            return res.status(403).json({ message: "Forbidden" });
+        }
+        // platform_admin can view any enrollment
 
         res.status(200).json({ success: true, data: enrollment });
     } catch (error) {
@@ -100,6 +110,7 @@ exports.getMyCourses = async (req, res) => {
         const data = enrollments.map((e) => {
             const mobileStatus = toMobileStatus(e.status);
             const item = {
+                enrollmentId: e._id,
                 courseID: e.course._id,
                 title: e.course.title,
                 category: e.course.category,
@@ -175,10 +186,13 @@ exports.getMyCourseDetails = async (req, res) => {
 
 // PATCH /enrollments/:id
 // Employee completing lessons updates progress here; hitting 100% auto-completes it.
-// An admin can also use this to change status directly (e.g. "waived").
+// A Company Admin can also use this to change status directly (e.g. "waived").
 // completedLessonId/completedBlockId each mark one more chapter/topic done
 // (idempotent — the "mark complete" actions the mobile Course Details /
 // Chapter Topics screens need to drive isCompleted).
+// platform_admin is view-only (+ delete) across the app, so it never reaches
+// here — this endpoint is client_admin (any field, own company) or the
+// enrollment's own user (progress/completion fields only).
 exports.updateEnrollment = async (req, res) => {
     try {
         const { id } = req.params;
@@ -187,6 +201,19 @@ exports.updateEnrollment = async (req, res) => {
         const enrollment = await Enrollment.findById(id);
         if (!enrollment) {
             return res.status(404).json({ message: "Enrollment not found" });
+        }
+
+        if (req.user.role === 'user') {
+            if (String(enrollment.userId) !== String(req.user.id)) {
+                return res.status(403).json({ message: "Forbidden" });
+            }
+            if (status !== undefined || dueDate !== undefined) {
+                return res.status(403).json({ message: "Only progressPct, completedLessonId and completedBlockId can be set by the enrolled user" });
+            }
+        } else if (req.user.role === 'client_admin') {
+            if (String(enrollment.companyId) !== String(req.user.companyId)) {
+                return res.status(403).json({ message: "Forbidden" });
+            }
         }
 
         if (completedLessonId) {
@@ -239,10 +266,15 @@ exports.updateEnrollment = async (req, res) => {
 exports.deleteEnrollment = async (req, res) => {
     try {
         const { id } = req.params;
-        const enrollment = await Enrollment.findByIdAndDelete(id);
-        if (!enrollment) {
+        const existing = await Enrollment.findById(id);
+        if (!existing) {
             return res.status(404).json({ message: "Enrollment not found" });
         }
+        if (req.user.role === 'client_admin' && String(existing.companyId) !== String(req.user.companyId)) {
+            return res.status(403).json({ message: "Forbidden" });
+        }
+
+        const enrollment = await Enrollment.findByIdAndDelete(id);
 
         res.status(200).json({
             success: true,

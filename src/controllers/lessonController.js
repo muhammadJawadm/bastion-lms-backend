@@ -3,6 +3,12 @@ const Courses = require("../models/Courses");
 const Lesson = require("../models/Lesson");
 const Enrollment = require("../models/Enrollments");
 
+// client_admin can only touch lessons in their own company's courses;
+// platform_admin (read/delete-only, enforced at the route) has no company
+// restriction. Returns true if the caller may proceed.
+const canAccessCourse = (req, course) =>
+    req.user.role !== 'client_admin' || String(course.companyId) === String(req.user.companyId);
+
 // POST /courses/:courseId/lessons   (or courseId in body)
 // The "Add Lesson" modal — only needs a title. Seeds one empty text page.
 exports.createLesson = async (req, res) => {
@@ -17,6 +23,9 @@ exports.createLesson = async (req, res) => {
         const course = await Courses.findById(courseId);
         if (!course) {
             return res.status(404).json({ message: "Course not found" });
+        }
+        if (!canAccessCourse(req, course)) {
+            return res.status(403).json({ message: "Forbidden" });
         }
 
         // put the new lesson at the end of the sidebar list
@@ -60,6 +69,10 @@ exports.getLessonById = async (req, res) => {
         if (!lesson) {
             return res.status(404).json({ message: "Lesson not found" });
         }
+        const course = await Courses.findById(lesson.courseId);
+        if (!course || !canAccessCourse(req, course)) {
+            return res.status(403).json({ message: "Forbidden" });
+        }
 
         res.status(200).json({ success: true, data: lesson });
     } catch (error) {
@@ -80,6 +93,10 @@ exports.updateLesson = async (req, res) => {
         if (!lesson) {
             return res.status(404).json({ message: "Lesson not found" });
         }
+        const course = await Courses.findById(lesson.courseId);
+        if (!course || !canAccessCourse(req, course)) {
+            return res.status(403).json({ message: "Forbidden" });
+        }
 
         if (title) lesson.title = title;
         if (isRequired !== undefined) lesson.isRequired = isRequired;
@@ -93,6 +110,28 @@ exports.updateLesson = async (req, res) => {
             message: "Lesson updated successfully",
             data: lesson,
         });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Server error" });
+    }
+};
+
+// DELETE /lessons/:lessonId  (client_admin own company, or platform_admin any)
+exports.deleteLesson = async (req, res) => {
+    const { lessonId } = req.params;
+
+    try {
+        const lesson = await Lesson.findById(lessonId);
+        if (!lesson) {
+            return res.status(404).json({ message: "Lesson not found" });
+        }
+        const course = await Courses.findById(lesson.courseId);
+        if (!course || !canAccessCourse(req, course)) {
+            return res.status(403).json({ message: "Forbidden" });
+        }
+
+        await Lesson.findByIdAndDelete(lessonId);
+        res.status(200).json({ success: true, message: "Lesson deleted successfully" });
     } catch (error) {
         console.error(error);
         res.status(500).json({ message: "Server error" });
@@ -114,6 +153,10 @@ exports.addBlock = async (req, res) => {
         const lesson = await Lesson.findById(lessonId);
         if (!lesson) {
             return res.status(404).json({ message: "Lesson not found" });
+        }
+        const course = await Courses.findById(lesson.courseId);
+        if (!course || !canAccessCourse(req, course)) {
+            return res.status(403).json({ message: "Forbidden" });
         }
 
         const block = {
@@ -152,6 +195,10 @@ exports.reorderBlocks = async (req, res) => {
         const lesson = await Lesson.findById(lessonId);
         if (!lesson) {
             return res.status(404).json({ message: "Lesson not found" });
+        }
+        const course = await Courses.findById(lesson.courseId);
+        if (!course || !canAccessCourse(req, course)) {
+            return res.status(403).json({ message: "Forbidden" });
         }
 
         // every id in `order` must be a block that actually belongs to this lesson,
@@ -192,6 +239,10 @@ exports.updateBlock = async (req, res) => {
         const lesson = await Lesson.findById(lessonId);
         if (!lesson) {
             return res.status(404).json({ message: "Lesson not found" });
+        }
+        const course = await Courses.findById(lesson.courseId);
+        if (!course || !canAccessCourse(req, course)) {
+            return res.status(403).json({ message: "Forbidden" });
         }
 
         const block = lesson.blocks.id(blockId);

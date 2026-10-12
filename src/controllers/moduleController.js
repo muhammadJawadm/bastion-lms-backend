@@ -4,6 +4,11 @@ const Lesson = require("../models/Lesson");
 // Modules live embedded on Course.modules (same pattern as blocks on Lesson),
 // not a separate collection — Lesson.moduleId just points at that subdocument's _id.
 
+// client_admin can only touch modules on their own company's courses;
+// platform_admin (read/delete-only, enforced at the route) has no restriction.
+const canAccessCourse = (req, course) =>
+    req.user.role !== 'client_admin' || String(course.companyId) === String(req.user.companyId);
+
 // POST /courses/:courseId/modules
 exports.addModule = async (req, res) => {
     const { courseId } = req.params;
@@ -17,6 +22,9 @@ exports.addModule = async (req, res) => {
         const course = await Course.findById(courseId);
         if (!course) {
             return res.status(404).json({ message: "Course not found" });
+        }
+        if (!canAccessCourse(req, course)) {
+            return res.status(403).json({ message: "Forbidden" });
         }
 
         const module = {
@@ -43,9 +51,12 @@ exports.getModules = async (req, res) => {
     const { courseId } = req.params;
 
     try {
-        const course = await Course.findById(courseId).select("modules");
+        const course = await Course.findById(courseId);
         if (!course) {
             return res.status(404).json({ message: "Course not found" });
+        }
+        if (!canAccessCourse(req, course)) {
+            return res.status(403).json({ message: "Forbidden" });
         }
 
         res.status(200).json({ success: true, data: course.modules });
@@ -64,6 +75,9 @@ exports.updateModule = async (req, res) => {
         const course = await Course.findOne({ "modules._id": moduleId });
         if (!course) {
             return res.status(404).json({ message: "Module not found" });
+        }
+        if (!canAccessCourse(req, course)) {
+            return res.status(403).json({ message: "Forbidden" });
         }
 
         const module = course.modules.id(moduleId);
@@ -93,6 +107,9 @@ exports.deleteModule = async (req, res) => {
         const course = await Course.findOne({ "modules._id": moduleId });
         if (!course) {
             return res.status(404).json({ message: "Module not found" });
+        }
+        if (!canAccessCourse(req, course)) {
+            return res.status(403).json({ message: "Forbidden" });
         }
 
         await Lesson.updateMany({ moduleId }, { $set: { moduleId: null } });

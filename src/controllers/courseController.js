@@ -6,7 +6,9 @@ const Enrollment = require("../models/Enrollments");
 
 exports.createCourse = async (req, res) => {
     try {
-        const { title, description, companyId , coverImageUrl, createdBy } = req.body;
+        const { title, description , coverImageUrl, createdBy } = req.body;
+        // route is client_admin-only — always their own company, never a body override
+        const companyId = req.user.companyId;
         if(!title || !companyId){
             return res.status(400).json({ message: "Title and Company ID are required" });
         }
@@ -45,6 +47,9 @@ exports.createCourseSetting  = async (req, res) => {
         if(!course){
             return res.status(404).json({ message: "Course not found" });
         }
+        if (req.user.role === 'client_admin' && String(course.companyId) !== String(req.user.companyId)) {
+            return res.status(403).json({ message: "Forbidden" });
+        }
         if(title) course.title = title;
         if(description) course.description = description;
         if(status) course.status = status;
@@ -66,19 +71,24 @@ exports.createCourseSetting  = async (req, res) => {
 }
 
 // GET /courses?companyId=&search=&status=&category=
-// The Courses list page — company-scoped. (companyId: null library courses
-// are excluded here on purpose — see getCourseLibrary for those.)
+// The Courses list page. (companyId: null library courses are excluded here
+// on purpose — see getCourseLibrary for those.)
 // Each course comes back with lessonCount/enrollmentCount pre-computed so the
 // frontend doesn't need a follow-up call per card.
+// client_admin is always scoped to their own company (from the token) — the
+// companyId query param is only honored for platform_admin, who can also
+// omit it entirely to see every company's courses.
 exports.getCourses = async (req, res) => {
     try {
-        const { companyId, search, status, category } = req.query;
+        const { search, status, category } = req.query;
+        let companyId = req.query.companyId;
 
-        if (!companyId) {
-            return res.status(400).json({ message: "Company ID is required" });
+        if (req.user.role === 'client_admin') {
+            companyId = req.user.companyId;
         }
 
-        const filter = { companyId };
+        const filter = {};
+        if (companyId) filter.companyId = companyId;
         if (status) filter.status = status;
         if (category) filter.category = category;
         if (search) filter.title = { $regex: search, $options: "i" };
@@ -126,6 +136,9 @@ exports.getCourseDetails = async (req, res) => {
         if (!course) {
             return res.status(404).json({ message: "Course not found" });
         }
+        if (req.user.role === 'client_admin' && String(course.companyId) !== String(req.user.companyId)) {
+            return res.status(403).json({ message: "Forbidden" });
+        }
 
         const lessons = await Lesson.find({ courseId }).sort({ sortOrder: 1 });
 
@@ -147,7 +160,8 @@ exports.getCourseDetails = async (req, res) => {
 // "added" so the frontend can show ADDED vs ADD TO COMPANY per card.
 exports.getCourseLibrary = async (req, res) => {
     try {
-        const { companyId } = req.query;
+        let companyId = req.query.companyId;
+        if (req.user.role === 'client_admin') companyId = req.user.companyId;
 
         const libraryCourses = await Course.find({ companyId: null }).lean();
 
@@ -178,7 +192,9 @@ exports.getCourseLibrary = async (req, res) => {
 exports.addToCompany = async (req, res) => {
     try {
         const { id } = req.params;
-        const { companyId, createdBy } = req.body;
+        const { createdBy } = req.body;
+        // route is client_admin-only — always their own company
+        const companyId = req.user.companyId;
 
         if (!companyId) {
             return res.status(400).json({ message: "Company ID is required" });
@@ -244,6 +260,32 @@ exports.addToCompany = async (req, res) => {
             message: "Course added to your company successfully",
             data: newCourse,
         });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Server error" });
+    }
+};
+
+// DELETE /courses/:courseId  (client_admin own company, or platform_admin any)
+// Cascades to this course's lessons and enrollments — nothing should be left
+// pointing at a course that no longer exists.
+exports.deleteCourse = async (req, res) => {
+    try {
+        const { courseId } = req.params;
+
+        const course = await Course.findById(courseId);
+        if (!course) {
+            return res.status(404).json({ message: "Course not found" });
+        }
+        if (req.user.role === 'client_admin' && String(course.companyId) !== String(req.user.companyId)) {
+            return res.status(403).json({ message: "Forbidden" });
+        }
+
+        await Lesson.deleteMany({ courseId });
+        await Enrollment.deleteMany({ courseId });
+        await Course.findByIdAndDelete(courseId);
+
+        res.status(200).json({ success: true, message: "Course deleted successfully" });
     } catch (error) {
         console.error(error);
         res.status(500).json({ message: "Server error" });

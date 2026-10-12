@@ -12,6 +12,10 @@ exports.getCompanyProfile = async (req, res) => {
     const { companyId } = req.params;
 
     try {
+        if (req.user.role !== 'platform_admin' && String(companyId) !== String(req.user.companyId)) {
+            return res.status(403).json({ message: "Forbidden" });
+        }
+
         const company = await Company.findById(companyId);
         if (!company) {
             return res.status(404).json({ message: "Company not found" });
@@ -34,6 +38,10 @@ exports.updateCompanyProfile = async (req, res) => {
     const { name, industry, contactName, contactEmail, contactPhone, city, state } = req.body;
 
     try {
+        if (String(companyId) !== String(req.user.companyId)) {
+            return res.status(403).json({ message: "Forbidden" });
+        }
+
         const company = await Company.findById(companyId);
         if (!company) {
             return res.status(404).json({ message: "Company not found" });
@@ -66,6 +74,10 @@ exports.updateBranding = async (req, res) => {
     const { logoUrl, primaryColor, accentColor } = req.body;
 
     try {
+        if (String(companyId) !== String(req.user.companyId)) {
+            return res.status(403).json({ message: "Forbidden" });
+        }
+
         const company = await Company.findById(companyId);
         if (!company) {
             return res.status(404).json({ message: "Company not found" });
@@ -101,6 +113,10 @@ exports.updateNotificationPreferences = async (req, res) => {
     } = req.body;
 
     try {
+        if (String(companyId) !== String(req.user.companyId)) {
+            return res.status(403).json({ message: "Forbidden" });
+        }
+
         const company = await Company.findById(companyId);
         if (!company) {
             return res.status(404).json({ message: "Company not found" });
@@ -132,6 +148,10 @@ exports.getDashboardStats = async (req, res) => {
     const { companyId } = req.params;
 
     try {
+        if (req.user.role !== 'platform_admin' && String(companyId) !== String(req.user.companyId)) {
+            return res.status(403).json({ message: "Forbidden" });
+        }
+
         const [
             totalCourses,
             draftCourses,
@@ -153,7 +173,7 @@ exports.getDashboardStats = async (req, res) => {
             Form.countDocuments({ companyId }),
             Form.countDocuments({ companyId, status: "draft" }),
             Form.countDocuments({ companyId, status: "published" }),
-            User.countDocuments({ companyId, role: "employee" }),
+            User.countDocuments({ companyId, role: "user" }),
             Enrollment.countDocuments({ companyId }),
             Enrollment.countDocuments({ companyId, status: "assigned" }),
             Enrollment.countDocuments({ companyId, status: "in_progress" }),

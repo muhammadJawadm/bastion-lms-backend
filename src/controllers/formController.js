@@ -2,11 +2,18 @@ const mongoose = require("mongoose");
 const Form = require("../models/Forms");
 const FormResponse = require("../models/FormResponses");
 
+// client_admin can only touch forms in their own company; platform_admin
+// (read/delete-only, enforced at the route) has no restriction.
+const canAccessForm = (req, form) =>
+    req.user.role !== 'client_admin' || String(form.companyId) === String(req.user.companyId);
+
 // POST /forms
 // Step 1 — the "title + description" screen. Creates the form and
 // redirects to the form builder page, same pattern as createCourse.
 exports.createForm = async (req, res) => {
-    const { title, description, companyId, ownerId } = req.body;
+    const { title, description, ownerId } = req.body;
+    // route is client_admin-only — always their own company
+    const companyId = req.user.companyId;
 
     if (!title || !companyId) {
         return res.status(400).json({ message: "Title and Company ID are required" });
@@ -50,13 +57,12 @@ const withOwnerInfo = (form) => {
 // The Forms list page — company-scoped.
 exports.getForms = async (req, res) => {
     try {
-        const { companyId, search, status } = req.query;
+        const { search, status } = req.query;
+        let companyId = req.query.companyId;
+        if (req.user.role === 'client_admin') companyId = req.user.companyId;
 
-        if (!companyId) {
-            return res.status(400).json({ message: "Company ID is required" });
-        }
-
-        const filter = { companyId };
+        const filter = {};
+        if (companyId) filter.companyId = companyId;
         if (status) filter.status = status;
         if (search) filter.title = { $regex: search, $options: "i" };
 
@@ -79,6 +85,9 @@ exports.getFormById = async (req, res) => {
         if (!form) {
             return res.status(404).json({ message: "Form not found" });
         }
+        if (!canAccessForm(req, form)) {
+            return res.status(403).json({ message: "Forbidden" });
+        }
 
         res.status(200).json({ success: true, data: withOwnerInfo(form) });
     } catch (error) {
@@ -99,6 +108,9 @@ exports.updateForm = async (req, res) => {
         const form = await Form.findById(formId);
         if (!form) {
             return res.status(404).json({ message: "Form not found" });
+        }
+        if (!canAccessForm(req, form)) {
+            return res.status(403).json({ message: "Forbidden" });
         }
 
         if (title) form.title = title;
@@ -131,6 +143,9 @@ exports.addPage = async (req, res) => {
         const form = await Form.findById(formId);
         if (!form) {
             return res.status(404).json({ message: "Form not found" });
+        }
+        if (!canAccessForm(req, form)) {
+            return res.status(403).json({ message: "Forbidden" });
         }
 
         const page = {
@@ -166,6 +181,9 @@ exports.addItem = async (req, res) => {
         const form = await Form.findById(formId);
         if (!form) {
             return res.status(404).json({ message: "Form not found" });
+        }
+        if (!canAccessForm(req, form)) {
+            return res.status(403).json({ message: "Forbidden" });
         }
 
         const page = form.pages.id(pageId);
@@ -205,6 +223,9 @@ exports.updateItem = async (req, res) => {
         const form = await Form.findById(formId);
         if (!form) {
             return res.status(404).json({ message: "Form not found" });
+        }
+        if (!canAccessForm(req, form)) {
+            return res.status(403).json({ message: "Forbidden" });
         }
 
         const page = form.pages.id(pageId);
@@ -246,6 +267,9 @@ exports.addField = async (req, res) => {
         const form = await Form.findById(formId);
         if (!form) {
             return res.status(404).json({ message: "Form not found" });
+        }
+        if (!canAccessForm(req, form)) {
+            return res.status(403).json({ message: "Forbidden" });
         }
 
         const page = form.pages.id(pageId);
@@ -298,6 +322,9 @@ exports.updateField = async (req, res) => {
         if (!form) {
             return res.status(404).json({ message: "Form not found" });
         }
+        if (!canAccessForm(req, form)) {
+            return res.status(403).json({ message: "Forbidden" });
+        }
 
         const page = form.pages.id(pageId);
         if (!page) {
@@ -347,6 +374,9 @@ exports.addColumn = async (req, res) => {
         if (!form) {
             return res.status(404).json({ message: "Form not found" });
         }
+        if (!canAccessForm(req, form)) {
+            return res.status(403).json({ message: "Forbidden" });
+        }
 
         const page = form.pages.id(pageId);
         if (!page) {
@@ -390,6 +420,9 @@ exports.updateColumn = async (req, res) => {
         if (!form) {
             return res.status(404).json({ message: "Form not found" });
         }
+        if (!canAccessForm(req, form)) {
+            return res.status(403).json({ message: "Forbidden" });
+        }
 
         const page = form.pages.id(pageId);
         if (!page) {
@@ -429,6 +462,9 @@ exports.deletePage = async (req, res) => {
         if (!form) {
             return res.status(404).json({ message: "Form not found" });
         }
+        if (!canAccessForm(req, form)) {
+            return res.status(403).json({ message: "Forbidden" });
+        }
 
         const page = form.pages.id(pageId);
         if (!page) {
@@ -453,6 +489,9 @@ exports.deleteItem = async (req, res) => {
         const form = await Form.findById(formId);
         if (!form) {
             return res.status(404).json({ message: "Form not found" });
+        }
+        if (!canAccessForm(req, form)) {
+            return res.status(403).json({ message: "Forbidden" });
         }
 
         const page = form.pages.id(pageId);
@@ -483,6 +522,9 @@ exports.deleteField = async (req, res) => {
         const form = await Form.findById(formId);
         if (!form) {
             return res.status(404).json({ message: "Form not found" });
+        }
+        if (!canAccessForm(req, form)) {
+            return res.status(403).json({ message: "Forbidden" });
         }
 
         const page = form.pages.id(pageId);
@@ -519,6 +561,9 @@ exports.deleteColumn = async (req, res) => {
         if (!form) {
             return res.status(404).json({ message: "Form not found" });
         }
+        if (!canAccessForm(req, form)) {
+            return res.status(403).json({ message: "Forbidden" });
+        }
 
         const page = form.pages.id(pageId);
         if (!page) {
@@ -550,12 +595,17 @@ exports.deleteColumn = async (req, res) => {
 // was answered, and flags any answer that matches its field's flagValues.
 exports.submitFormResponse = async (req, res) => {
     const { formId } = req.params;
-    const { companyId, submittedBy, answers, tableRows } = req.body;
+    const { submittedBy, answers, tableRows } = req.body;
+    // always the caller's own company — never a body override
+    const companyId = req.user.companyId;
 
     try {
         const form = await Form.findById(formId).lean();
         if (!form) {
             return res.status(404).json({ message: "Form not found" });
+        }
+        if (req.user.role !== 'platform_admin' && String(form.companyId) !== String(companyId)) {
+            return res.status(403).json({ message: "Forbidden" });
         }
 
         // collect every section field's required/flagValues, keyed by its _id
@@ -632,6 +682,14 @@ exports.getFormResponses = async (req, res) => {
     const { formId } = req.params;
 
     try {
+        const form = await Form.findById(formId);
+        if (!form) {
+            return res.status(404).json({ message: "Form not found" });
+        }
+        if (!canAccessForm(req, form)) {
+            return res.status(403).json({ message: "Forbidden" });
+        }
+
         const responses = await FormResponse.find({ formId }).sort({ submittedAt: -1 });
         res.status(200).json({ success: true, data: responses });
     } catch (error) {
@@ -650,7 +708,34 @@ exports.getFormResponseById = async (req, res) => {
         if (!response) {
             return res.status(404).json({ message: "Response not found" });
         }
+        if (req.user.role === 'client_admin' && String(response.companyId) !== String(req.user.companyId)) {
+            return res.status(403).json({ message: "Forbidden" });
+        }
         res.status(200).json({ success: true, data: response });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Server error" });
+    }
+};
+
+// DELETE /forms/:formId  (client_admin own company, or platform_admin any)
+// Cascades to every response submitted for this form.
+exports.deleteForm = async (req, res) => {
+    const { formId } = req.params;
+
+    try {
+        const form = await Form.findById(formId);
+        if (!form) {
+            return res.status(404).json({ message: "Form not found" });
+        }
+        if (!canAccessForm(req, form)) {
+            return res.status(403).json({ message: "Forbidden" });
+        }
+
+        await FormResponse.deleteMany({ formId });
+        await Form.findByIdAndDelete(formId);
+
+        res.status(200).json({ success: true, message: "Form deleted successfully" });
     } catch (error) {
         console.error(error);
         res.status(500).json({ message: "Server error" });

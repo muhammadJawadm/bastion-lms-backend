@@ -1,12 +1,19 @@
 const AnswerSet = require("../models/AnswerSet");
 
-// POST /answer-sets
+// client_admin can only touch answer sets in their own company; platform_admin
+// (read/delete-only, enforced at the route) has no restriction.
+const canAccess = (req, answerSet) =>
+    req.user.role !== 'client_admin' || String(answerSet.companyId) === String(req.user.companyId);
+
+// POST /answer-sets  (client_admin only — route-gated)
 // A reusable named option list (e.g. "Severity Levels") that a dropdown/
 // multiple_choice/checkbox field can point at via field.answerSetId instead
 // of repeating the same options inline on every field.
 exports.createAnswerSet = async (req, res) => {
     try {
-        const { companyId, label, options } = req.body;
+        const { label, options } = req.body;
+        // route is client_admin-only — always their own company
+        const companyId = req.user.companyId;
 
         if (!companyId || !label) {
             return res.status(400).json({ message: "Company ID and label are required" });
@@ -29,10 +36,11 @@ exports.createAnswerSet = async (req, res) => {
     }
 };
 
-// GET /answer-sets?companyId=
+// GET /answer-sets?companyId=  (client_admin or platform_admin — route-gated)
 exports.getAnswerSets = async (req, res) => {
     try {
-        const { companyId } = req.query;
+        let companyId = req.query.companyId;
+        if (req.user.role === 'client_admin') companyId = req.user.companyId;
 
         if (!companyId) {
             return res.status(400).json({ message: "Company ID is required" });
@@ -46,7 +54,7 @@ exports.getAnswerSets = async (req, res) => {
     }
 };
 
-// PATCH /answer-sets/:id
+// PATCH /answer-sets/:id  (client_admin only — route-gated)
 exports.updateAnswerSet = async (req, res) => {
     try {
         const { id } = req.params;
@@ -55,6 +63,9 @@ exports.updateAnswerSet = async (req, res) => {
         const answerSet = await AnswerSet.findById(id);
         if (!answerSet) {
             return res.status(404).json({ message: "Answer set not found" });
+        }
+        if (!canAccess(req, answerSet)) {
+            return res.status(403).json({ message: "Forbidden" });
         }
 
         if (label !== undefined) answerSet.label = label;
@@ -72,16 +83,20 @@ exports.updateAnswerSet = async (req, res) => {
     }
 };
 
-// DELETE /answer-sets/:id
+// DELETE /answer-sets/:id  (client_admin own company, or platform_admin any)
 exports.deleteAnswerSet = async (req, res) => {
     try {
         const { id } = req.params;
 
-        const answerSet = await AnswerSet.findByIdAndDelete(id);
+        const answerSet = await AnswerSet.findById(id);
         if (!answerSet) {
             return res.status(404).json({ message: "Answer set not found" });
         }
+        if (!canAccess(req, answerSet)) {
+            return res.status(403).json({ message: "Forbidden" });
+        }
 
+        await AnswerSet.findByIdAndDelete(id);
         res.status(200).json({ success: true, message: "Answer set deleted successfully" });
     } catch (error) {
         console.error(error);

@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const verifyToken = require('../middlewares/verifyToken');
+const requireRole = require('../middlewares/requireRole');
 
 const {
     registerUser,
@@ -10,9 +11,9 @@ const {
     forgotPassword,
     verifyResetOTP,
     resetPassword,
-    addEmployee,
     addUser,
-    getEmployees,
+    createCompanyAdmin,
+    getUsers,
     getUser,
     updateUser,
     changePassword,
@@ -30,9 +31,9 @@ router.post('/reset-password', resetPassword);
 
 // Protected — specific paths before the "/:id" catch-all, or they'd never be reached
 router.get('/profile', verifyToken, getUser);
-router.get('/employees', verifyToken, getEmployees);
-router.post('/employees', verifyToken, addEmployee);
-router.post('/', verifyToken, addUser);
+router.get('/', verifyToken, requireRole('client_admin', 'platform_admin'), getUsers);
+router.post('/', verifyToken, requireRole('client_admin', 'platform_admin'), addUser);
+router.post('/company-admins', verifyToken, requireRole('platform_admin'), createCompanyAdmin);
 router.patch('/:id/change-password', verifyToken, changePassword);
 router.get('/:id', verifyToken, getUser);
 router.patch('/:id', verifyToken, updateUser);
