@@ -21,6 +21,13 @@ const formSchema = new mongoose.Schema({
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User',
     },
+    // opaque — the frontend writes/reads/evaluates these, the server just persists them as-is
+    logic: [{
+        type: mongoose.Schema.Types.Mixed,
+    }],
+    reportLayout: {
+        type: mongoose.Schema.Types.Mixed,
+    },
     // formFields: [{
     //     type: {
     //         type: String,
@@ -83,12 +90,13 @@ const formSchema = new mongoose.Schema({
                         type: String,
                     }],
                     answerSetId:{
-                        type:String,
+                        type: mongoose.Schema.Types.ObjectId,
+                        ref: 'AnswerSet',
                     },
-                    minRating: {
+                    min: {
                         type: Number,
                     },
-                    maxRating: {
+                    max: {
                         type: Number,
                     },
                     flagValues: [{

@@ -34,6 +34,11 @@ const lessonSchema = new mongoose.Schema({
             type: String,
             default:"text",
         },
+        // separate from data (which stays opaque/type-specific) so "topic
+        // title" is always readable the same way regardless of block type
+        title: {
+            type: String,
+        },
         data: {
             type: mongoose.Schema.Types.Mixed,
         },

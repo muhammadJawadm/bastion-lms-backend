@@ -30,7 +30,20 @@ const enrollmentSchema = new mongoose.Schema({
         type: Date,
         default: null,
     },
-}, 
+    // which of the course's lessons ("chapters" on the mobile side) this user
+    // has finished — drives Course Details' isCompleted/currentChapter.
+    completedLessonIds: {
+        type: [mongoose.Schema.Types.ObjectId],
+        ref: 'Lesson',
+        default: [],
+    },
+    // which blocks ("topics" on the mobile side, within a chapter) this user
+    // has finished — drives Chapter Topics' isCompleted/currentTopicIndex.
+    completedBlockIds: {
+        type: [mongoose.Schema.Types.ObjectId],
+        default: [],
+    },
+},
     {                
     timestamps: true    ,
     }

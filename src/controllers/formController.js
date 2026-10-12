@@ -33,6 +33,19 @@ exports.createForm = async (req, res) => {
     }
 };
 
+// Keeps ownerId as a plain id in the response (not the populated subdocument)
+// while adding ownerName/ownerEmail alongside it, so existing consumers that
+// expect ownerId to be an id string don't break.
+const withOwnerInfo = (form) => {
+    const owner = form.ownerId;
+    return {
+        ...form,
+        ownerId: owner ? owner._id : null,
+        ownerName: owner ? owner.name : null,
+        ownerEmail: owner ? owner.email : null,
+    };
+};
+
 // GET /forms?companyId=&search=&status=
 // The Forms list page — company-scoped.
 exports.getForms = async (req, res) => {
@@ -47,8 +60,8 @@ exports.getForms = async (req, res) => {
         if (status) filter.status = status;
         if (search) filter.title = { $regex: search, $options: "i" };
 
-        const forms = await Form.find(filter).sort({ updatedAt: -1 });
-        res.status(200).json({ success: true, data: forms });
+        const forms = await Form.find(filter).sort({ updatedAt: -1 }).populate('ownerId', 'name email').lean();
+        res.status(200).json({ success: true, data: forms.map(withOwnerInfo) });
     } catch (error) {
         console.error(error);
         res.status(500).json({ message: "Server error" });
@@ -62,12 +75,12 @@ exports.getFormById = async (req, res) => {
     const { formId } = req.params;
 
     try {
-        const form = await Form.findById(formId);
+        const form = await Form.findById(formId).populate('ownerId', 'name email').lean();
         if (!form) {
             return res.status(404).json({ message: "Form not found" });
         }
 
-        res.status(200).json({ success: true, data: form });
+        res.status(200).json({ success: true, data: withOwnerInfo(form) });
     } catch (error) {
         console.error(error);
         res.status(500).json({ message: "Server error" });
@@ -75,10 +88,12 @@ exports.getFormById = async (req, res) => {
 };
 
 // PATCH /forms/:formId
-// Form settings — title, description, status (draft/published), owner.
+// Form settings — title, description, status (draft/published), owner, plus
+// the opaque logic/reportLayout blobs the frontend owns (stored as-is, never
+// interpreted server-side).
 exports.updateForm = async (req, res) => {
     const { formId } = req.params;
-    const { title, description, status, ownerId } = req.body;
+    const { title, description, status, ownerId, logic, reportLayout } = req.body;
 
     try {
         const form = await Form.findById(formId);
@@ -90,6 +105,8 @@ exports.updateForm = async (req, res) => {
         if (description !== undefined) form.description = description;
         if (status) form.status = status;
         if (ownerId) form.ownerId = ownerId;
+        if (logic !== undefined) form.logic = logic;
+        if (reportLayout !== undefined) form.reportLayout = reportLayout;
         await form.save();
 
         res.status(200).json({
@@ -219,7 +236,7 @@ exports.updateItem = async (req, res) => {
 // "+ Add Field" inside a section item — the ADD FIELD modal.
 exports.addField = async (req, res) => {
     const { formId, pageId, itemId } = req.params;
-    const { type, label, helpText, required, options, answerSetId, minRating, maxRating, flagValues } = req.body;
+    const { type, label, helpText, required, options, answerSetId, min, max, flagValues } = req.body;
 
     if (!type) {
         return res.status(400).json({ message: "Field type is required" });
@@ -252,8 +269,8 @@ exports.addField = async (req, res) => {
             sortOrder: item.fields.length,
             options,
             answerSetId,
-            minRating,
-            maxRating,
+            min,
+            max,
             flagValues,
         };
         item.fields.push(field);
@@ -274,7 +291,7 @@ exports.addField = async (req, res) => {
 // Autosave from the field's right-hand panel (Label, Help Text, Required, etc.)
 exports.updateField = async (req, res) => {
     const { formId, pageId, itemId, fieldId } = req.params;
-    const { type, label, helpText, required, options, answerSetId, minRating, maxRating, flagValues } = req.body;
+    const { type, label, helpText, required, options, answerSetId, min, max, flagValues } = req.body;
 
     try {
         const form = await Form.findById(formId);
@@ -303,8 +320,8 @@ exports.updateField = async (req, res) => {
         if (required !== undefined) field.required = required;
         if (options !== undefined) field.options = options;
         if (answerSetId !== undefined) field.answerSetId = answerSetId;
-        if (minRating !== undefined) field.minRating = minRating;
-        if (maxRating !== undefined) field.maxRating = maxRating;
+        if (min !== undefined) field.min = min;
+        if (max !== undefined) field.max = max;
         if (flagValues !== undefined) field.flagValues = flagValues;
         await form.save();
 
@@ -574,12 +591,27 @@ exports.submitFormResponse = async (req, res) => {
             return { fieldId: a.fieldId, value: a.value, flagged };
         });
 
+        // Incoming contract groups rows by table item:
+        // [{ itemId, rows: [{ cells: [{ columnId, value }] }] }]
+        // — flatten into the stored shape, one entry per row, tagged with its
+        // table item id and position within that table.
+        const flattenedTableRows = [];
+        (tableRows || []).forEach((group) => {
+            (group.rows || []).forEach((row, index) => {
+                flattenedTableRows.push({
+                    pageItemId: group.itemId,
+                    sortOrder: index,
+                    cells: row.cells || [],
+                });
+            });
+        });
+
         const response = new FormResponse({
             formId,
             companyId,
             submittedBy,
             answers: flaggedAnswers,
-            tableRows: tableRows || [],
+            tableRows: flattenedTableRows,
         });
         await response.save();
 

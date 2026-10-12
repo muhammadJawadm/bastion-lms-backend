@@ -1,6 +1,7 @@
 const mongoose = require("mongoose");
 const Course = require("../models/Courses");
 const Lesson = require("../models/Lesson");
+const Enrollment = require("../models/Enrollments");
 
 
 exports.createCourse = async (req, res) => {
@@ -34,8 +35,8 @@ exports.createCourse = async (req, res) => {
 
 exports.createCourseSetting  = async (req, res) => {
     try {
-        const { courseId,title, description,status, durationMinutes, issuesCertificate, certificateTitle, passScore } = req.body;
-        
+        const { courseId,title, description,status, durationMinutes, issuesCertificate, certificateTitle, passScore, coverImageUrl } = req.body;
+
         if(!courseId){
             return res.status(400).json({ message: "Course ID is required" });
         }
@@ -51,6 +52,7 @@ exports.createCourseSetting  = async (req, res) => {
         if(issuesCertificate !== undefined) course.issuesCertificate = issuesCertificate;
         if(certificateTitle) course.certificateTitle = certificateTitle;
         if(passScore) course.passScore = passScore;
+        if(coverImageUrl !== undefined) course.coverImageUrl = coverImageUrl;
         await course.save();
         res.status(201).json({ 
             success: true,
@@ -66,6 +68,8 @@ exports.createCourseSetting  = async (req, res) => {
 // GET /courses?companyId=&search=&status=&category=
 // The Courses list page — company-scoped. (companyId: null library courses
 // are excluded here on purpose — see getCourseLibrary for those.)
+// Each course comes back with lessonCount/enrollmentCount pre-computed so the
+// frontend doesn't need a follow-up call per card.
 exports.getCourses = async (req, res) => {
     try {
         const { companyId, search, status, category } = req.query;
@@ -79,8 +83,32 @@ exports.getCourses = async (req, res) => {
         if (category) filter.category = category;
         if (search) filter.title = { $regex: search, $options: "i" };
 
-        const courses = await Course.find(filter).sort({ updatedAt: -1 });
-        res.status(200).json({ success: true, data: courses });
+        const courses = await Course.find(filter).sort({ updatedAt: -1 }).lean();
+        const courseIds = courses.map((c) => c._id);
+
+        const [lessonCounts, enrollmentCounts] = await Promise.all([
+            Lesson.aggregate([
+                { $match: { courseId: { $in: courseIds } } },
+                { $group: { _id: "$courseId", count: { $sum: 1 } } },
+            ]),
+            Enrollment.aggregate([
+                { $match: { courseId: { $in: courseIds } } },
+                { $group: { _id: "$courseId", count: { $sum: 1 } } },
+            ]),
+        ]);
+
+        const lessonCountByCourse = {};
+        lessonCounts.forEach((l) => { lessonCountByCourse[String(l._id)] = l.count; });
+        const enrollmentCountByCourse = {};
+        enrollmentCounts.forEach((e) => { enrollmentCountByCourse[String(e._id)] = e.count; });
+
+        const data = courses.map((course) => ({
+            ...course,
+            lessonCount: lessonCountByCourse[String(course._id)] || 0,
+            enrollmentCount: enrollmentCountByCourse[String(course._id)] || 0,
+        }));
+
+        res.status(200).json({ success: true, data });
     } catch (error) {
         console.error(error);
         res.status(500).json({ message: "Server error" });

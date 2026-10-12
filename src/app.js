@@ -10,6 +10,8 @@ const companyRoutes = require('./routes/companyRoutes');
 const enrollmentRoutes = require('./routes/enrollmentRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const uploadRoutes = require('./routes/uploadRoutes');
+const moduleRoutes = require('./routes/moduleRoutes');
+const answerSetRoutes = require('./routes/answerSetRoutes');
 
 const app = express();
 
@@ -28,6 +30,8 @@ app.use('/company', companyRoutes);
 app.use('/enrollments', enrollmentRoutes);
 app.use('/admin', adminRoutes);
 app.use('/uploads', uploadRoutes);
+app.use('/modules', moduleRoutes);
+app.use('/answer-sets', answerSetRoutes);
 
 // 404 fallback — anything not matched above
 app.use((req, res) => {

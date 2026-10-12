@@ -1,6 +1,7 @@
 const mongoose = require("mongoose");
 const Courses = require("../models/Courses");
 const Lesson = require("../models/Lesson");
+const Enrollment = require("../models/Enrollments");
 
 // POST /courses/:courseId/lessons   (or courseId in body)
 // The "Add Lesson" modal — only needs a title. Seeds one empty text page.
@@ -103,7 +104,7 @@ exports.updateLesson = async (req, res) => {
 // data is whatever that type's editor produces (see block data shapes).
 exports.addBlock = async (req, res) => {
     const { lessonId } = req.params;
-    const { type, data } = req.body;
+    const { type, title, data } = req.body;
 
     if (!type) {
         return res.status(400).json({ message: "Block type is required" });
@@ -117,6 +118,7 @@ exports.addBlock = async (req, res) => {
 
         const block = {
             type,
+            title,
             data: data || {},
             sortOrder: lesson.blocks.length,
         };
@@ -184,7 +186,7 @@ exports.reorderBlocks = async (req, res) => {
 // Autosave from a page's editor — updates that one page's content.
 exports.updateBlock = async (req, res) => {
     const { lessonId, blockId } = req.params;
-    const { type, data } = req.body;
+    const { type, title, data } = req.body;
 
     try {
         const lesson = await Lesson.findById(lessonId);
@@ -198,6 +200,7 @@ exports.updateBlock = async (req, res) => {
         }
 
         if (type) block.type = type;
+        if (title !== undefined) block.title = title;
         if (data !== undefined) block.data = data;
         await lesson.save();
 
@@ -205,6 +208,52 @@ exports.updateBlock = async (req, res) => {
             success: true,
             message: "Page updated successfully",
             data: block,
+        });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Server error" });
+    }
+};
+
+// GET /lessons/:lessonId/topics
+// Mobile "Chapter Topics" screen — a chapter's topics are this lesson's
+// blocks; isCompleted/currentTopicIndex come from the enrollment (for this
+// lesson's course) completedBlockIds, same pattern as Course Details' chapters.
+exports.getChapterTopics = async (req, res) => {
+    const { lessonId } = req.params;
+
+    try {
+        const lesson = await Lesson.findById(lessonId).lean();
+        if (!lesson) {
+            return res.status(404).json({ message: "Lesson not found" });
+        }
+
+        const enrollment = await Enrollment.findOne({
+            courseId: lesson.courseId,
+            userId: req.user.id,
+        }).lean();
+        if (!enrollment) {
+            return res.status(404).json({ message: "You are not enrolled in this chapter's course" });
+        }
+
+        const completedBlockIds = new Set((enrollment.completedBlockIds || []).map(String));
+        const blocks = (lesson.blocks || []).slice().sort((a, b) => a.sortOrder - b.sortOrder);
+
+        const topics = blocks.map((block, index) => ({
+            index,
+            topicID: block._id,
+            title: block.title,
+            type: block.type,
+            isCompleted: completedBlockIds.has(String(block._id)),
+        }));
+        const currentTopic = topics.find((t) => !t.isCompleted);
+
+        res.status(200).json({
+            success: true,
+            data: {
+                currentTopicIndex: currentTopic ? currentTopic.index : null,
+                topics,
+            },
         });
     } catch (error) {
         console.error(error);
