@@ -10,6 +10,8 @@ const {
     updateForm,
     deleteForm,
     addPage,
+    updatePage,
+    reorderPages,
     deletePage,
     addItem,
     updateItem,
@@ -39,6 +41,8 @@ router.get('/:formId/responses', verifyToken, requireRole('client_admin', 'platf
 router.get('/:formId/responses/:responseId', verifyToken, requireRole('client_admin', 'platform_admin'), getFormResponseById);
 
 router.post('/:formId/pages', verifyToken, requireRole('client_admin'), addPage);
+router.post('/:formId/pages/reorder', verifyToken, requireRole('client_admin'), reorderPages);
+router.patch('/:formId/pages/:pageId', verifyToken, requireRole('client_admin'), updatePage);
 router.delete('/:formId/pages/:pageId', verifyToken, requireRole('client_admin'), deletePage);
 
 router.post('/:formId/pages/:pageId/items', verifyToken, requireRole('client_admin'), addItem);

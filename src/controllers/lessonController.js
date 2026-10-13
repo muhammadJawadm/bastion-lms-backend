@@ -266,6 +266,39 @@ exports.updateBlock = async (req, res) => {
     }
 };
 
+// DELETE /lessons/:lessonId/blocks/:blockId
+exports.deleteBlock = async (req, res) => {
+    const { lessonId, blockId } = req.params;
+
+    try {
+        const lesson = await Lesson.findById(lessonId);
+        if (!lesson) {
+            return res.status(404).json({ message: "Lesson not found" });
+        }
+        const course = await Courses.findById(lesson.courseId);
+        if (!course || !canAccessCourse(req, course)) {
+            return res.status(403).json({ message: "Forbidden" });
+        }
+
+        const block = lesson.blocks.id(blockId);
+        if (!block) {
+            return res.status(404).json({ message: "Page not found" });
+        }
+
+        lesson.blocks.pull(blockId);
+        // close the gap so sortOrder stays a dense 0..n-1 sequence
+        lesson.blocks
+            .sort((a, b) => a.sortOrder - b.sortOrder)
+            .forEach((b, index) => { b.sortOrder = index; });
+        await lesson.save();
+
+        res.status(200).json({ success: true, message: "Page deleted successfully" });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Server error" });
+    }
+};
+
 // GET /lessons/:lessonId/topics
 // Mobile "Chapter Topics" screen — a chapter's topics are this lesson's
 // blocks; isCompleted/currentTopicIndex come from the enrollment (for this

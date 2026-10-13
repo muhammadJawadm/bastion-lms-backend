@@ -9,6 +9,7 @@ const {
     deleteLesson,
     addBlock,
     updateBlock,
+    deleteBlock,
     reorderBlocks,
     getChapterTopics,
 } = require('../controllers/lessonController');
@@ -23,5 +24,6 @@ router.get('/:lessonId/topics', verifyToken, requireRole('user'), getChapterTopi
 router.post('/:lessonId/blocks', verifyToken, requireRole('client_admin'), addBlock);
 router.post('/:lessonId/blocks/reorder', verifyToken, requireRole('client_admin'), reorderBlocks);
 router.patch('/:lessonId/blocks/:blockId', verifyToken, requireRole('client_admin'), updateBlock);
+router.delete('/:lessonId/blocks/:blockId', verifyToken, requireRole('client_admin'), deleteBlock);
 
 module.exports = router;

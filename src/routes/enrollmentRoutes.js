@@ -4,6 +4,7 @@ const verifyToken = require('../middlewares/verifyToken');
 const requireRole = require('../middlewares/requireRole');
 
 const {
+    getEnrollments,
     createEnrollment,
     getEnrollmentById,
     updateEnrollment,
@@ -12,6 +13,7 @@ const {
     getMyCourseDetails,
 } = require('../controllers/enrollmentController');
 
+router.get('/', verifyToken, requireRole('client_admin', 'platform_admin'), getEnrollments);
 router.post('/', verifyToken, requireRole('client_admin'), createEnrollment);
 
 // mobile "My Courses" — declared before "/:id" so "my-courses" isn't swallowed as an enrollment id

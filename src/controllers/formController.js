@@ -167,6 +167,86 @@ exports.addPage = async (req, res) => {
     }
 };
 
+// PATCH /forms/:formId/pages/:pageId
+// Rename a page (sortOrder is normally driven by reorderPages, but settable here too).
+exports.updatePage = async (req, res) => {
+    const { formId, pageId } = req.params;
+    const { title, sortOrder } = req.body;
+
+    try {
+        const form = await Form.findById(formId);
+        if (!form) {
+            return res.status(404).json({ message: "Form not found" });
+        }
+        if (!canAccessForm(req, form)) {
+            return res.status(403).json({ message: "Forbidden" });
+        }
+
+        const page = form.pages.id(pageId);
+        if (!page) {
+            return res.status(404).json({ message: "Page not found" });
+        }
+
+        if (title !== undefined) page.title = title;
+        if (sortOrder !== undefined) page.sortOrder = sortOrder;
+        await form.save();
+
+        res.status(200).json({
+            success: true,
+            message: "Page updated successfully",
+            data: page,
+        });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Server error" });
+    }
+};
+
+// POST /forms/:formId/pages/reorder
+// Drag-reordering the page tabs — body: { order: [pageId, pageId, ...] } in
+// the new order. Same pattern as the lesson block reorder.
+exports.reorderPages = async (req, res) => {
+    const { formId } = req.params;
+    const { order } = req.body;
+
+    if (!Array.isArray(order) || !order.length) {
+        return res.status(400).json({ message: "order must be a non-empty array of page ids" });
+    }
+
+    try {
+        const form = await Form.findById(formId);
+        if (!form) {
+            return res.status(404).json({ message: "Form not found" });
+        }
+        if (!canAccessForm(req, form)) {
+            return res.status(403).json({ message: "Forbidden" });
+        }
+
+        const existingIds = form.pages.map((p) => String(p._id));
+        const sameSet =
+            order.length === existingIds.length &&
+            existingIds.every((id) => order.includes(id));
+        if (!sameSet) {
+            return res.status(400).json({ message: "order must contain exactly this form's page ids" });
+        }
+
+        order.forEach((pageId, index) => {
+            form.pages.id(pageId).sortOrder = index;
+        });
+
+        await form.save();
+
+        res.status(200).json({
+            success: true,
+            message: "Pages reordered successfully",
+            data: form.pages,
+        });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Server error" });
+    }
+};
+
 // POST /forms/:formId/pages/:pageId/items
 // "+ Add Section, Table, or Instruction" on a page.
 exports.addItem = async (req, res) => {

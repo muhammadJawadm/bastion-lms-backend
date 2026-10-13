@@ -12,6 +12,7 @@ const adminRoutes = require('./routes/adminRoutes');
 const uploadRoutes = require('./routes/uploadRoutes');
 const moduleRoutes = require('./routes/moduleRoutes');
 const answerSetRoutes = require('./routes/answerSetRoutes');
+const certificateRoutes = require('./routes/certificateRoutes');
 
 const app = express();
 
@@ -32,6 +33,7 @@ app.use('/admin', adminRoutes);
 app.use('/uploads', uploadRoutes);
 app.use('/modules', moduleRoutes);
 app.use('/answer-sets', answerSetRoutes);
+app.use('/certificates', certificateRoutes);
 
 // 404 fallback — anything not matched above
 app.use((req, res) => {

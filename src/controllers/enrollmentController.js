@@ -2,6 +2,7 @@ const mongoose = require("mongoose");
 const Enrollment = require("../models/Enrollments");
 const Course = require("../models/Courses");
 const Lesson = require("../models/Lesson");
+const { issueCertificateIfEligible } = require("./certificateController");
 
 // The DB's enrollment.status has 5 values; the mobile "My Courses" screen
 // only ever shows 3. overdue folds into inProgress, waived folds into
@@ -16,6 +17,82 @@ const toMobileStatus = (status) => {
     if (status === "assigned") return "notStarted";
     if (status === "completed" || status === "waived") return "completed";
     return "inProgress"; // in_progress, overdue
+};
+
+// GET /enrollments?companyId=&courseId=&userId=&status=&search=&perPage=&pageNo=
+// The admin-facing list — Dashboard/Employees/Assignments/MyTraining all read
+// from this. Returns the raw 5-value status (assigned/in_progress/overdue/
+// completed/waived), unlike the mobile 3-value mapping on /enrollments/my-courses.
+exports.getEnrollments = async (req, res) => {
+    try {
+        let companyId = req.query.companyId;
+        if (req.user.role === 'client_admin') companyId = req.user.companyId;
+        if (!companyId && req.user.role !== 'platform_admin') {
+            return res.status(400).json({ message: "Company ID is required" });
+        }
+
+        const { courseId, userId, status, search } = req.query;
+        const limit = parseInt(req.query.perPage, 10) || 50;
+        const page = parseInt(req.query.pageNo, 10) || 1;
+        const skip = (page - 1) * limit;
+
+        const match = {};
+        if (companyId) match.companyId = new mongoose.Types.ObjectId(companyId);
+        if (courseId) match.courseId = new mongoose.Types.ObjectId(courseId);
+        if (userId) match.userId = new mongoose.Types.ObjectId(userId);
+        if (status) match.status = status;
+
+        const pipeline = [
+            { $match: match },
+            { $lookup: { from: "courses", localField: "courseId", foreignField: "_id", as: "course" } },
+            { $unwind: { path: "$course", preserveNullAndEmptyArrays: true } },
+            { $lookup: { from: "users", localField: "userId", foreignField: "_id", as: "user" } },
+            { $unwind: { path: "$user", preserveNullAndEmptyArrays: true } },
+        ];
+        if (search) {
+            pipeline.push({
+                $match: {
+                    $or: [
+                        { "course.title": { $regex: search, $options: "i" } },
+                        { "user.name": { $regex: search, $options: "i" } },
+                        { "user.email": { $regex: search, $options: "i" } },
+                    ],
+                },
+            });
+        }
+        pipeline.push({ $sort: { updatedAt: -1 } });
+
+        const [countResult, enrollments] = await Promise.all([
+            Enrollment.aggregate([...pipeline, { $count: "total" }]),
+            Enrollment.aggregate([...pipeline, { $skip: skip }, { $limit: limit }]),
+        ]);
+        const total = countResult[0] ? countResult[0].total : 0;
+
+        const data = enrollments.map((e) => ({
+            _id: e._id,
+            courseId: e.courseId,
+            courseTitle: e.course ? e.course.title : null,
+            userId: e.userId,
+            userName: e.user ? e.user.name : null,
+            userEmail: e.user ? e.user.email : null,
+            companyId: e.companyId,
+            status: e.status,
+            progressPct: e.progressPct,
+            dueDate: e.dueDate,
+            completionAt: e.completionAt,
+            createdAt: e.createdAt,
+            updatedAt: e.updatedAt,
+        }));
+
+        res.status(200).json({
+            success: true,
+            data,
+            pagination: { perPage: limit, pageNo: page, total, totalPages: Math.ceil(total / limit) },
+        });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Server error" });
+    }
 };
 
 // POST /enrollments
@@ -202,6 +279,7 @@ exports.updateEnrollment = async (req, res) => {
         if (!enrollment) {
             return res.status(404).json({ message: "Enrollment not found" });
         }
+        const wasAlreadyCompleted = enrollment.status === "completed";
 
         if (req.user.role === 'user') {
             if (String(enrollment.userId) !== String(req.user.id)) {
@@ -250,6 +328,13 @@ exports.updateEnrollment = async (req, res) => {
         if (dueDate) enrollment.dueDate = dueDate;
 
         await enrollment.save();
+
+        // Newly completed (not already) — issue a certificate if the course grants one.
+        if (!wasAlreadyCompleted && enrollment.status === "completed") {
+            const course = await Course.findById(enrollment.courseId).lean();
+            await issueCertificateIfEligible(enrollment, course);
+        }
+
         res.status(200).json({
             success: true,
             message: "Enrollment updated successfully",

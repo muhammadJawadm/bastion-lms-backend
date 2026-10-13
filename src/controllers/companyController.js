@@ -1,10 +1,13 @@
 const mongoose = require("mongoose");
 const Company = require("../models/Company");
 const Course = require("../models/Courses");
+const Lesson = require("../models/Lesson");
 const Form = require("../models/Forms");
+const FormResponse = require("../models/FormResponses");
 const User = require("../models/User");
 const Enrollment = require("../models/Enrollments");
 const Certificate = require("../models/Certificates");
+const AnswerSet = require("../models/AnswerSet");
 
 // GET /company/:companyId
 // Loads Settings — one document backs all three tabs (Profile, Branding, Notifications).
@@ -198,6 +201,90 @@ exports.getDashboardStats = async (req, res) => {
                 certificates: { total: totalCertificates },
             },
         });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Server error" });
+    }
+};
+
+// POST /company  (platform_admin only — route-gated)
+// A bare company shell with no admin attached — for setting one up ahead of
+// inviting its first Company Admin. To create both together in one step, use
+// POST /users/company-admins instead.
+exports.createCompany = async (req, res) => {
+    try {
+        const { name, industry, contactName, contactEmail, contactPhone, city, state } = req.body;
+        if (!name) {
+            return res.status(400).json({ message: "Name is required" });
+        }
+
+        const company = await Company.create({ name, industry, contactName, contactEmail, contactPhone, city, state });
+        res.status(201).json({ success: true, message: "Company created successfully", data: company });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Server error" });
+    }
+};
+
+// PATCH /company/:companyId  (platform_admin only — route-gated)
+// Direct edit of the company record itself — broader than the client_admin
+// profile/branding/notifications tabs (e.g. isActive, paymentMethods).
+exports.updateCompany = async (req, res) => {
+    try {
+        const { companyId } = req.params;
+        const { name, industry, contactName, contactEmail, contactPhone, city, state, isActive, paymentMethods } = req.body;
+
+        const company = await Company.findById(companyId);
+        if (!company) {
+            return res.status(404).json({ message: "Company not found" });
+        }
+
+        if (name !== undefined) company.name = name;
+        if (industry !== undefined) company.industry = industry;
+        if (contactName !== undefined) company.contactName = contactName;
+        if (contactEmail !== undefined) company.contactEmail = contactEmail;
+        if (contactPhone !== undefined) company.contactPhone = contactPhone;
+        if (city !== undefined) company.city = city;
+        if (state !== undefined) company.state = state;
+        if (isActive !== undefined) company.isActive = isActive;
+        if (paymentMethods !== undefined) company.paymentMethods = paymentMethods;
+        await company.save();
+
+        res.status(200).json({ success: true, message: "Company updated successfully", data: company });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Server error" });
+    }
+};
+
+// DELETE /company/:companyId  (platform_admin only — route-gated)
+// Cascades to everything that belongs to this company — users, courses,
+// lessons, forms, form responses, enrollments, answer sets, certificates.
+exports.deleteCompany = async (req, res) => {
+    try {
+        const { companyId } = req.params;
+
+        const company = await Company.findById(companyId);
+        if (!company) {
+            return res.status(404).json({ message: "Company not found" });
+        }
+
+        const courseIds = await Course.find({ companyId }).distinct('_id');
+        const formIds = await Form.find({ companyId }).distinct('_id');
+
+        await Promise.all([
+            Lesson.deleteMany({ courseId: { $in: courseIds } }),
+            FormResponse.deleteMany({ formId: { $in: formIds } }),
+            Course.deleteMany({ companyId }),
+            Form.deleteMany({ companyId }),
+            Enrollment.deleteMany({ companyId }),
+            AnswerSet.deleteMany({ companyId }),
+            Certificate.deleteMany({ companyId }),
+            User.deleteMany({ companyId }),
+        ]);
+        await Company.findByIdAndDelete(companyId);
+
+        res.status(200).json({ success: true, message: "Company deleted successfully" });
     } catch (error) {
         console.error(error);
         res.status(500).json({ message: "Server error" });
