@@ -2,6 +2,10 @@ const multer = require('multer');
 
 // Memory storage — the file buffer goes straight into a Cloudinary upload
 // stream (see uploadController), nothing is ever written to local disk.
+// This proxy path is for small/medium files (images, PDFs, avatars,
+// signatures, short clips). Anything large — especially video — should use
+// the signed direct-to-Cloudinary flow instead (GET /uploads/signature),
+// which never puts the file bytes through this server at all.
 const storage = multer.memoryStorage();
 
 const ALLOWED_MIME_TYPES = [
@@ -26,7 +30,11 @@ const upload = multer({
     storage,
     fileFilter,
     limits: {
-        fileSize: 200 * 1024 * 1024, // 200MB — generous for lesson video; tighten later if needed
+        // the hard ceiling multer itself enforces, before the file is even
+        // read — set to the video limit since multer can't tell mimetypes
+        // apart at this layer; uploadController applies the tighter,
+        // type-aware limit (see TYPE_SIZE_LIMITS) after the file lands.
+        fileSize: 500 * 1024 * 1024, // 500MB
     },
 });
 
