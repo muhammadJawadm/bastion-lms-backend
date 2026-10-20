@@ -43,6 +43,13 @@ const enrollmentSchema = new mongoose.Schema({
         type: [mongoose.Schema.Types.ObjectId],
         default: [],
     },
+    // accumulated minutes spent in this course — the mobile app reports
+    // deltas as the user studies (see updateEnrollment's addTimeSpentMinutes),
+    // never an absolute value, so multiple sessions add up correctly.
+    timeSpentMinutes: {
+        type: Number,
+        default: 0,
+    },
 },
     {                
     timestamps: true    ,

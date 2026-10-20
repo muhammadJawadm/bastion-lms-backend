@@ -250,6 +250,7 @@ exports.getMyCourseDetails = async (req, res) => {
                 description: course.description,
                 totalChapters: chapters.length,
                 completedChapters: chapters.filter((c) => c.isCompleted).length,
+                timeSpent: enrollment.timeSpentMinutes || 0,
                 progress: enrollment.progressPct,
                 currentChapterId: currentChapter ? currentChapter.chapterID : null,
                 chapters,
@@ -273,7 +274,7 @@ exports.getMyCourseDetails = async (req, res) => {
 exports.updateEnrollment = async (req, res) => {
     try {
         const { id } = req.params;
-        const { status, progressPct, dueDate, completedLessonId, completedBlockId } = req.body;
+        const { status, progressPct, dueDate, completedLessonId, completedBlockId, addTimeSpentMinutes } = req.body;
 
         const enrollment = await Enrollment.findById(id);
         if (!enrollment) {
@@ -286,7 +287,7 @@ exports.updateEnrollment = async (req, res) => {
                 return res.status(403).json({ message: "Forbidden" });
             }
             if (status !== undefined || dueDate !== undefined) {
-                return res.status(403).json({ message: "Only progressPct, completedLessonId and completedBlockId can be set by the enrolled user" });
+                return res.status(403).json({ message: "Only progressPct, completedLessonId, completedBlockId and addTimeSpentMinutes can be set by the enrolled user" });
             }
         } else if (req.user.role === 'client_admin') {
             if (String(enrollment.companyId) !== String(req.user.companyId)) {
@@ -306,6 +307,15 @@ exports.updateEnrollment = async (req, res) => {
                 (blockId) => String(blockId) === String(completedBlockId)
             );
             if (!alreadyDone) enrollment.completedBlockIds.push(completedBlockId);
+        }
+
+        // a delta to add, not an absolute value — each study session reports
+        // how many minutes it covered, and they accumulate across sessions.
+        if (addTimeSpentMinutes !== undefined) {
+            if (typeof addTimeSpentMinutes !== 'number' || addTimeSpentMinutes < 0) {
+                return res.status(400).json({ message: "addTimeSpentMinutes must be a non-negative number" });
+            }
+            enrollment.timeSpentMinutes = (enrollment.timeSpentMinutes || 0) + addTimeSpentMinutes;
         }
 
         if (progressPct !== undefined) {
