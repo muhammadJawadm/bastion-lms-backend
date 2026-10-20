@@ -3,6 +3,7 @@ const Enrollment = require("../models/Enrollments");
 const Course = require("../models/Courses");
 const Lesson = require("../models/Lesson");
 const { issueCertificateIfEligible } = require("./certificateController");
+const { createNotificationIfEnabled } = require("./notificationController");
 
 // The DB's enrollment.status has 5 values; the mobile "My Courses" screen
 // only ever shows 3. overdue folds into inProgress, waived folds into
@@ -117,6 +118,18 @@ exports.createEnrollment = async (req, res) => {
         });
 
         await newEnrollment.save();
+
+        const course = await Course.findById(courseId).select('title').lean();
+        await createNotificationIfEnabled({
+            userId,
+            companyId,
+            settingCategory: 'course',
+            title: `New course assigned: ${course ? course.title : 'a course'}`,
+            type: 'course',
+            redirectTo: 'course',
+            redirectId: courseId,
+        });
+
         res.status(201).json({
             success: true,
             message: "Course assigned successfully",
@@ -339,10 +352,22 @@ exports.updateEnrollment = async (req, res) => {
 
         await enrollment.save();
 
-        // Newly completed (not already) — issue a certificate if the course grants one.
+        // Newly completed (not already) — issue a certificate if the course grants
+        // one, and notify either way (completion is worth telling the user about
+        // regardless of whether a certificate came with it).
         if (!wasAlreadyCompleted && enrollment.status === "completed") {
             const course = await Course.findById(enrollment.courseId).lean();
-            await issueCertificateIfEligible(enrollment, course);
+            const certificate = await issueCertificateIfEligible(enrollment, course);
+
+            await createNotificationIfEnabled({
+                userId: enrollment.userId,
+                companyId: enrollment.companyId,
+                settingCategory: 'completion',
+                title: `You completed ${course ? course.title : 'a course'}!`,
+                type: 'success',
+                redirectTo: certificate ? 'certificate' : 'course',
+                redirectId: certificate ? certificate._id : enrollment.courseId,
+            });
         }
 
         res.status(200).json({

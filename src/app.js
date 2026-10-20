@@ -13,6 +13,8 @@ const uploadRoutes = require('./routes/uploadRoutes');
 const moduleRoutes = require('./routes/moduleRoutes');
 const answerSetRoutes = require('./routes/answerSetRoutes');
 const certificateRoutes = require('./routes/certificateRoutes');
+const formAssignmentRoutes = require('./routes/formAssignmentRoutes');
+const notificationRoutes = require('./routes/notificationRoutes');
 
 const app = express();
 
@@ -34,6 +36,8 @@ app.use('/uploads', uploadRoutes);
 app.use('/modules', moduleRoutes);
 app.use('/answer-sets', answerSetRoutes);
 app.use('/certificates', certificateRoutes);
+app.use('/form-assignments', formAssignmentRoutes);
+app.use('/notifications', notificationRoutes);
 
 // 404 fallback — anything not matched above
 app.use((req, res) => {

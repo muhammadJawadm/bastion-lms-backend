@@ -54,6 +54,16 @@ const userSchema = new mongoose.Schema({
         type: Boolean,
         default: false,
     },
+    // per-user mobile/web notification toggles — distinct from Company's
+    // notificationPreferences (that's company-wide email digest settings,
+    // controlled by the Company Admin; this is the individual's own).
+    notificationSettings: {
+        courseAssignmentAlert: { type: Boolean, default: true },
+        deadlineReminder: { type: Boolean, default: true },
+        completionNotification: { type: Boolean, default: true },
+        safetyTaskAlert: { type: Boolean, default: true },
+        formAssignmentAlert: { type: Boolean, default: true },
+    },
 },
  {                
     timestamps: true    ,

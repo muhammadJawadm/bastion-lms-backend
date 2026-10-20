@@ -1,6 +1,9 @@
 const mongoose = require("mongoose");
 const Form = require("../models/Forms");
 const FormResponse = require("../models/FormResponses");
+const FormAssignment = require("../models/FormAssignment");
+const User = require("../models/User");
+const { createNotificationIfEnabled } = require("./notificationController");
 
 // client_admin can only touch forms in their own company; platform_admin
 // (read/delete-only, enforced at the route) has no restriction.
@@ -675,9 +678,13 @@ exports.deleteColumn = async (req, res) => {
 // was answered, and flags any answer that matches its field's flagValues.
 exports.submitFormResponse = async (req, res) => {
     const { formId } = req.params;
-    const { submittedBy, answers, tableRows } = req.body;
-    // always the caller's own company — never a body override
+    const { answers, tableRows } = req.body;
+    // always the caller's own company — never a body override.
+    // submittedBy is forced to the caller's own id for a mobile user (so
+    // FormAssignment matching below can't be spoofed); a Company Admin may
+    // still submit on someone else's behalf via the body, same as before.
     const companyId = req.user.companyId;
+    const submittedBy = req.user.role === 'client_admin' ? (req.body.submittedBy || req.user.id) : req.user.id;
 
     try {
         const form = await Form.findById(formId).lean();
@@ -744,6 +751,28 @@ exports.submitFormResponse = async (req, res) => {
             tableRows: flattenedTableRows,
         });
         await response.save();
+
+        // If this submission fulfills an assignment, close it out.
+        await FormAssignment.findOneAndUpdate(
+            { formId, userId: submittedBy },
+            { status: 'submitted', submittedAt: new Date(), responseId: response._id }
+        );
+
+        // A flagged answer is a safety concern — tell every Company Admin, not
+        // just whoever happens to open the responses list later.
+        const hasFlagged = flaggedAnswers.some((a) => a.flagged);
+        if (hasFlagged) {
+            const admins = await User.find({ companyId, role: 'client_admin' }).select('_id');
+            await Promise.all(admins.map((admin) => createNotificationIfEnabled({
+                userId: admin._id,
+                companyId,
+                settingCategory: 'safety',
+                title: `Safety concern flagged in "${form.title}"`,
+                type: 'warning',
+                redirectTo: 'form',
+                redirectId: formId,
+            })));
+        }
 
         res.status(201).json({
             success: true,
