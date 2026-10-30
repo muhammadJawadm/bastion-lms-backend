@@ -6,6 +6,7 @@ const otpGenerator = require('otp-generator');
 const Otp = require('../models/Otp');
 const { sendEmail, sendCredentialsEmail } = require('../utils/sendEmail');
 const jwt = require('../utils/jwt');
+const TenantBilling = require('../models/TenantBilling');
 
 // POST /users/register
 // Company admin signup — creates the Company (tenant) and its first
@@ -104,6 +105,22 @@ exports.addUser = async (req, res) => {
         const existingUser = await User.findOne({ email: normalizedEmail });
         if (existingUser) {
             return res.status(400).json({ message: 'A user with this email already exists' });
+        }
+
+        // Seat cap — only enforced for billable mobile/front-line seats, and
+        // only once a company has a billing record with a seat limit set.
+        // Companies with no subscription yet, or an unlimited (null) limit,
+        // are never blocked here.
+        if (role === 'user') {
+            const billing = await TenantBilling.findOne({ companyId }).select('seatLimit');
+            if (billing && billing.seatLimit != null) {
+                const currentSeats = await User.countDocuments({ companyId, role: 'user' });
+                if (currentSeats >= billing.seatLimit) {
+                    return res.status(403).json({
+                        message: `Seat limit reached (${billing.seatLimit}). Upgrade your plan to add more users.`,
+                    });
+                }
+            }
         }
 
         const hashedPassword = await bcrypt.hash(password, 10);

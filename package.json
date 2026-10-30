@@ -31,7 +31,8 @@
     "mongoose": "^9.9.5",
     "multer": "^2.4.0",
     "nodemailer": "^10.0.1",
-    "otp-generator": "^4.0.1"
+    "otp-generator": "^4.0.1",
+    "stripe": "^23.0.1"
   },
   "devDependencies": {
     "nodemon": "^3.1.14"

@@ -40,6 +40,7 @@ exports.createLesson = async (req, res) => {
             blocks: [
                 {
                     type: "text",
+                    title,
                     data: { html: `<h1>${title}</h1>` },
                     sortOrder: 0,
                 },

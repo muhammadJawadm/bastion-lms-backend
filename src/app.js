@@ -15,10 +15,17 @@ const answerSetRoutes = require('./routes/answerSetRoutes');
 const certificateRoutes = require('./routes/certificateRoutes');
 const formAssignmentRoutes = require('./routes/formAssignmentRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
+const billingRoutes = require('./routes/billingRoutes');
+const webhookRoutes = require('./routes/webhookRoutes');
 
 const app = express();
 
 app.use(cors());
+
+// Stripe webhook needs the raw, unparsed body to verify its signature, so it
+// must be mounted before express.json() runs on everything else.
+app.use('/webhooks', webhookRoutes);
+
 app.use(express.json());
 
 app.get('/', (req, res) => {
@@ -38,6 +45,7 @@ app.use('/answer-sets', answerSetRoutes);
 app.use('/certificates', certificateRoutes);
 app.use('/form-assignments', formAssignmentRoutes);
 app.use('/notifications', notificationRoutes);
+app.use('/billing', billingRoutes);
 
 // 404 fallback — anything not matched above
 app.use((req, res) => {
