@@ -327,7 +327,7 @@ exports.getChapterTopics = async (req, res) => {
         const topics = blocks.map((block, index) => ({
             index,
             topicID: block._id,
-            title: block.title,
+            title: block.title || (block.data && block.data.title) || null,
             type: block.type,
             isCompleted: completedBlockIds.has(String(block._id)),
         }));
@@ -338,6 +338,60 @@ exports.getChapterTopics = async (req, res) => {
             data: {
                 currentTopicIndex: currentTopic ? currentTopic.index : null,
                 topics,
+            },
+        });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Server error" });
+    }
+};
+
+// GET /lessons/topics/:topicId
+// Mobile topic detail — full content (block.data) of one topic, found by the
+// topicID alone (blocks are embedded in their lesson, so we look the lesson up
+// through the block id). Scoped to the caller's own enrollment like getChapterTopics.
+exports.getTopicById = async (req, res) => {
+    const { topicId } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(topicId)) {
+        return res.status(400).json({ message: "Invalid topic id" });
+    }
+
+    try {
+        const lesson = await Lesson.findOne({ 'blocks._id': topicId }).lean();
+        if (!lesson) {
+            return res.status(404).json({ message: "Topic not found" });
+        }
+
+        const enrollment = await Enrollment.findOne({
+            courseId: lesson.courseId,
+            userId: req.user.id,
+        }).lean();
+        if (!enrollment) {
+            return res.status(404).json({ message: "You are not enrolled in this topic's course" });
+        }
+
+        const blocks = lesson.blocks.slice().sort((a, b) => a.sortOrder - b.sortOrder);
+        const index = blocks.findIndex((b) => String(b._id) === String(topicId));
+        const block = blocks[index];
+        const completedBlockIds = new Set((enrollment.completedBlockIds || []).map(String));
+
+        res.status(200).json({
+            success: true,
+            data: {
+                topicID: block._id,
+                lessonID: lesson._id,
+                lessonTitle: lesson.title,
+                courseID: lesson.courseId,
+                enrollmentID: enrollment._id,
+                index,
+                totalTopics: blocks.length,
+                title: block.title || (block.data && block.data.title) || null,
+                type: block.type,
+                data: block.data || {},
+                isCompleted: completedBlockIds.has(String(block._id)),
+                previousTopicID: index > 0 ? blocks[index - 1]._id : null,
+                nextTopicID: index < blocks.length - 1 ? blocks[index + 1]._id : null,
             },
         });
     } catch (error) {

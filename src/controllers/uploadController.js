@@ -9,6 +9,7 @@ const ALLOWED_FOLDERS = [
     "certificates",
     "avatars",
     "supporting-media",
+    "company-logos",
 ];
 
 // Multer's limit (middlewares/upload.js) is one flat ceiling for every
