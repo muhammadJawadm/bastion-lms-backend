@@ -2,6 +2,8 @@ const mongoose = require("mongoose");
 const Courses = require("../models/Courses");
 const Lesson = require("../models/Lesson");
 const Enrollment = require("../models/Enrollments");
+const { issueCertificateIfEligible } = require("./certificateController");
+const { createNotificationIfEnabled } = require("./notificationController");
 
 // client_admin can only touch lessons in their own company's courses;
 // platform_admin (read/delete-only, enforced at the route) has no company
@@ -392,6 +394,106 @@ exports.getTopicById = async (req, res) => {
                 isCompleted: completedBlockIds.has(String(block._id)),
                 previousTopicID: index > 0 ? blocks[index - 1]._id : null,
                 nextTopicID: index < blocks.length - 1 ? blocks[index + 1]._id : null,
+            },
+        });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Server error" });
+    }
+};
+
+// POST /lessons/topics/:topicId/complete
+// Mobile "mark topic complete" — the server resolves the lesson and the
+// caller's enrollment from the topicID + token, so the app never handles an
+// enrollmentID. Idempotent. Also: marks the chapter (lesson) complete once all
+// its topics are done, recomputes progressPct from completed topics out of all
+// topics in the course, and completes the course (certificate + notification)
+// when that reaches 100%. Optional body: { addTimeSpentMinutes }.
+exports.completeTopic = async (req, res) => {
+    const { topicId } = req.params;
+    const { addTimeSpentMinutes } = req.body || {};
+
+    if (!mongoose.Types.ObjectId.isValid(topicId)) {
+        return res.status(400).json({ message: "Invalid topic id" });
+    }
+    if (addTimeSpentMinutes !== undefined && (typeof addTimeSpentMinutes !== 'number' || addTimeSpentMinutes < 0)) {
+        return res.status(400).json({ message: "addTimeSpentMinutes must be a non-negative number" });
+    }
+
+    try {
+        const lesson = await Lesson.findOne({ 'blocks._id': topicId }).lean();
+        if (!lesson) {
+            return res.status(404).json({ message: "Topic not found" });
+        }
+
+        const enrollment = await Enrollment.findOne({
+            courseId: lesson.courseId,
+            userId: req.user.id,
+        });
+        if (!enrollment) {
+            return res.status(404).json({ message: "You are not enrolled in this topic's course" });
+        }
+        const wasAlreadyCompleted = enrollment.status === "completed";
+
+        // 1. the topic
+        enrollment.completedBlockIds.addToSet(topicId);
+        const doneBlocks = new Set(enrollment.completedBlockIds.map(String));
+
+        // 2. the chapter — complete once every topic in it is done
+        const chapterCompleted = lesson.blocks.every((b) => doneBlocks.has(String(b._id)));
+        if (chapterCompleted) enrollment.completedLessonIds.addToSet(lesson._id);
+
+        // 3. course progress — completed topics / all topics across the course's lessons
+        const courseLessons = await Lesson.find({ courseId: lesson.courseId }, 'blocks._id').lean();
+        const allBlockIds = courseLessons.flatMap((l) => l.blocks.map((b) => String(b._id)));
+        const doneCount = allBlockIds.filter((id) => doneBlocks.has(id)).length;
+        const progressPct = allBlockIds.length ? Math.round((doneCount / allBlockIds.length) * 100) : 0;
+
+        if (enrollment.status !== "completed" && enrollment.status !== "waived") {
+            enrollment.progressPct = progressPct;
+            if (progressPct >= 100) {
+                enrollment.status = "completed";
+                enrollment.completionAt = new Date();
+            } else if (enrollment.status === "assigned") {
+                enrollment.status = "in_progress";
+            }
+        }
+
+        if (addTimeSpentMinutes !== undefined) {
+            enrollment.timeSpentMinutes = (enrollment.timeSpentMinutes || 0) + addTimeSpentMinutes;
+        }
+
+        await enrollment.save();
+
+        // same completion side-effects as PATCH /enrollments/:id
+        if (!wasAlreadyCompleted && enrollment.status === "completed") {
+            const course = await Courses.findById(enrollment.courseId).lean();
+            const certificate = await issueCertificateIfEligible(enrollment, course);
+
+            await createNotificationIfEnabled({
+                userId: enrollment.userId,
+                companyId: enrollment.companyId,
+                settingCategory: 'completion',
+                title: `You completed ${course ? course.title : 'a course'}!`,
+                type: 'success',
+                redirectTo: certificate ? 'certificate' : 'course',
+                redirectId: certificate ? certificate._id : enrollment.courseId,
+            });
+        }
+
+        const blocks = lesson.blocks.slice().sort((a, b) => a.sortOrder - b.sortOrder);
+        const next = blocks.find((b) => !doneBlocks.has(String(b._id)));
+
+        res.status(200).json({
+            success: true,
+            message: "Topic marked as complete",
+            data: {
+                topicID: topicId,
+                isCompleted: true,
+                chapterCompleted,
+                nextTopicID: next ? next._id : null,
+                courseProgressPct: enrollment.progressPct,
+                courseStatus: enrollment.status,
             },
         });
     } catch (error) {

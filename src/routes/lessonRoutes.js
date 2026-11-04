@@ -13,10 +13,12 @@ const {
     reorderBlocks,
     getChapterTopics,
     getTopicById,
+    completeTopic,
 } = require('../controllers/lessonController');
 
 // Mobile topic detail by topicID — declared before "/:lessonId" for clarity
 router.get('/topics/:topicId', verifyToken, requireRole('user', 'client_admin', 'platform_admin'), getTopicById);
+router.post('/topics/:topicId/complete', verifyToken, requireRole('user', 'client_admin'), completeTopic);
 
 router.get('/:lessonId', verifyToken, requireRole('client_admin', 'platform_admin'), getLessonById);
 router.patch('/:lessonId', verifyToken, requireRole('client_admin'), updateLesson);

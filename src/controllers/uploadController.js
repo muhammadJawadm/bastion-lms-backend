@@ -23,15 +23,22 @@ const maxBytesFor = (mimetype) =>
     mimetype.startsWith("video/") ? TYPE_SIZE_LIMITS.video : TYPE_SIZE_LIMITS.default;
 
 // Streams a buffer (from multer's memory storage) into Cloudinary without
-// ever touching local disk. upload_large_stream chunks the transfer
-// (Cloudinary's recommended path for anything sizeable, video especially),
-// rather than sending it as one giant request.
+// ever touching local disk. Anything sizeable (video especially) goes through
+// upload_chunked_stream, which splits the transfer into parts instead of one
+// giant request. (Not upload_large_stream: its first argument is unused, so
+// options passed there are silently dropped, and it's missing in some SDK versions.)
+const CHUNK_THRESHOLD = 20 * 1024 * 1024; // 20MB
+const CHUNK_SIZE = 6 * 1024 * 1024; // 6MB parts
+
 const streamToCloudinary = (buffer, options) =>
     new Promise((resolve, reject) => {
-        const uploadStream = cloudinary.uploader.upload_large_stream(options, (error, result) => {
+        const callback = (error, result) => {
             if (error) return reject(error);
             resolve(result);
-        });
+        };
+        const uploadStream = buffer.length > CHUNK_THRESHOLD
+            ? cloudinary.uploader.upload_chunked_stream(callback, { ...options, chunk_size: CHUNK_SIZE })
+            : cloudinary.uploader.upload_stream(options, callback);
         uploadStream.end(buffer);
     });
 
