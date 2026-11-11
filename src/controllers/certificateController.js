@@ -1,4 +1,9 @@
 const Certificate = require("../models/Certificates");
+const User = require("../models/User");
+const Course = require("../models/Courses");
+const Company = require("../models/Company");
+const cloudinary = require("../config/cloudinary");
+const { buildCertificatePdf } = require("../utils/certificatePdf");
 
 const generateCertificateNumber = () =>
     `CERT-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
@@ -71,6 +76,71 @@ exports.getCertificateById = async (req, res) => {
     } catch (error) {
         console.error(error);
         res.status(500).json({ message: "Server error" });
+    }
+};
+
+const uploadPdfToCloudinary = (buffer, publicId) =>
+    new Promise((resolve, reject) => {
+        const stream = cloudinary.uploader.upload_stream(
+            {
+                folder: "bastion-lms/certificates",
+                public_id: publicId,
+                resource_type: "raw", // raw delivery serves the PDF as-is (no image-type PDF restrictions)
+                overwrite: true,
+            },
+            (error, result) => (error ? reject(error) : resolve(result))
+        );
+        stream.end(buffer);
+    });
+
+// POST /certificates/:id/generate
+// The "Build certificate" button. Renders the certificate PDF, uploads it to
+// Cloudinary and saves the URL in pdfUrl. Idempotent: if the PDF already
+// exists it just returns the certificate, so a double tap never builds twice.
+// The request stays open while the PDF is built — the app shows "preparing…".
+exports.generateCertificatePdf = async (req, res) => {
+    try {
+        const certificate = await Certificate.findById(req.params.id);
+        if (!certificate) {
+            return res.status(404).json({ message: "Certificate not found" });
+        }
+
+        if (req.user.role === 'user' && String(certificate.userId) !== String(req.user.id)) {
+            return res.status(403).json({ message: "Forbidden" });
+        }
+        if (req.user.role === 'client_admin' && String(certificate.companyId) !== String(req.user.companyId)) {
+            return res.status(403).json({ message: "Forbidden" });
+        }
+
+        if (certificate.pdfUrl) {
+            return res.status(200).json({ success: true, message: "Certificate already generated", data: certificate });
+        }
+
+        const [user, course, company] = await Promise.all([
+            User.findById(certificate.userId).select("name").lean(),
+            certificate.courseId ? Course.findById(certificate.courseId).select("title").lean() : null,
+            certificate.companyId ? Company.findById(certificate.companyId).select("name").lean() : null,
+        ]);
+
+        const pdfBuffer = await buildCertificatePdf({
+            userName: user && user.name,
+            courseTitle: course && course.title,
+            companyName: company && company.name,
+            certificateTitle: certificate.certificateTitle,
+            certificateNumber: certificate.certificateNumber,
+            issuedAt: certificate.issuedAt || certificate.createdAt,
+            expiresAt: certificate.expiresAt,
+        });
+
+        const result = await uploadPdfToCloudinary(pdfBuffer, `${certificate.certificateNumber}.pdf`);
+
+        certificate.pdfUrl = result.secure_url;
+        await certificate.save();
+
+        res.status(200).json({ success: true, message: "Certificate generated successfully", data: certificate });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: error.message || "Server error" });
     }
 };
 
